@@ -24,7 +24,7 @@ The following resources have already been prepared for this training environment
 | **AWS Account** | An IAM user with `AdministratorAccess` has been created |
 | **DNS Domain** | A Route 53 hosted zone for your base domain already exists |
 | **Bastion Host** | An EC2 instance you will connect to from VS Code |
-| **Red Hat Account** | You will need a pull secret from the Red Hat Hybrid Cloud Console |
+| **Pull Secret** | Already included in the configuration file — no Red Hat account needed |
 
 If you were setting this up from scratch, you would need to register a domain in Route 53 (which automatically creates a hosted zone), create an IAM user with admin permissions, and launch a bastion host. These steps are documented in the reference section at the end of this lab.
 
@@ -191,17 +191,6 @@ oc version --client
 
 You should see version numbers for both tools. Note the OpenShift version — this is the version of the cluster you are about to install.
 
-## Get Your Pull Secret
-
-OpenShift container images are hosted in Red Hat's authenticated registries. A **pull secret** is a JSON credential file that grants your cluster permission to download these images. Without it, the nodes cannot pull the container images they need to run the control plane and cluster operators.
-
-1. Open your browser and navigate to the [Red Hat Hybrid Cloud Console](https://console.redhat.com/openshift/downloads#tool-pull-secret).
-2. Log in with your Red Hat account.
-3. Locate the **Pull Secret** section and click **Copy**.
-4. Save it somewhere accessible — you will paste it into the configuration file in the next step.
-
-The pull secret is a single line of JSON containing authentication tokens for `quay.io`, `registry.redhat.io`, `registry.connect.redhat.com`, and `cloud.openshift.com`.
-
 ## Understand the Installation Configuration
 
 The OpenShift installer uses a file called `install-config.yaml` to determine exactly what to build. This is the single most important file in the installation process — it controls everything from how many nodes to create, to which AWS region to use, to what networking configuration the cluster will have.
@@ -232,7 +221,7 @@ controlPlane:
       type: m6i.2xlarge
   replicas: 1
 metadata:
-  name: YOURCLUSTERNAME
+  name: studentN
 networking:
   clusterNetwork:
   - cidr: 10.128.0.0/14
@@ -246,7 +235,7 @@ platform:
   aws:
     region: us-west-1
 publish: External
-pullSecret: 'YOURPULLSECRET'
+pullSecret: '<provided>'
 sshKey: 'YOURSSHKEY'
 ```
 
@@ -296,10 +285,10 @@ controlPlane:
 
 ```yaml
 metadata:
-  name: YOURCLUSTERNAME
+  name: studentN
 ```
 
-The cluster name. This becomes part of every DNS record and AWS resource tag. Replace `YOURCLUSTERNAME` with the name assigned by the instructor (e.g., `student1`, `trainer`). The cluster name must be lowercase and may contain hyphens. Keep it short — the installer combines it with a random suffix to name AWS resources, and some AWS resource types have character limits.
+The cluster name. This becomes part of every DNS record and AWS resource tag. Replace `studentN` with the name assigned by the instructor (e.g., `student1`, `student2`). The cluster name must be lowercase and may contain hyphens. Keep it short — the installer combines it with a random suffix to name AWS resources, and some AWS resource types have character limits.
 
 **`networking`**
 
@@ -341,7 +330,7 @@ Makes the cluster's API and application endpoints publicly accessible via the in
 
 **`pullSecret`**
 
-The JSON credentials you copied from the Red Hat Hybrid Cloud Console. The installer writes this to every node so they can pull container images from Red Hat's registries.
+JSON credentials that grant the cluster permission to pull container images from Red Hat's registries. This is already provided in the configuration file — you do not need to obtain your own.
 
 **`sshKey`**
 
@@ -369,23 +358,33 @@ wget -q -O ~/ocp-install/install-config.yaml https://raw.githubusercontent.com/j
 
 ### Edit the Configuration File
 
-Now open the file in VS Code's editor. In the VS Code file explorer on the left sidebar, navigate to the home directory, then into `ocp-install`, and click on `install-config.yaml`. Alternatively, you can open it from the terminal:
+The configuration file has two placeholders that need to be replaced: the cluster name and the SSH public key. Run the following commands in the terminal, replacing `studentN` with your assigned cluster name (e.g., `student1`, `student2`):
+
+```bash
+sed -i "s/studentN/YOUR_STUDENT_NAME/" ~/ocp-install/install-config.yaml
+```
+
+For example, if you are student 3:
+
+```bash
+sed -i "s/studentN/student3/" ~/ocp-install/install-config.yaml
+```
+
+Next, inject your SSH public key (generated in the earlier step) into the configuration file:
+
+```bash
+sed -i "s|YOURSSHKEY|$(cat ~/.ssh/ocp4-aws-key.pub)|" ~/ocp-install/install-config.yaml
+```
+
+The pull secret is already included in the configuration file — you do not need to obtain one from the Red Hat Hybrid Cloud Console.
+
+Verify your changes by opening the file in VS Code:
 
 ```bash
 code ~/ocp-install/install-config.yaml
 ```
 
-The file will open in a new editor tab with full YAML syntax highlighting. You need to replace three placeholder values. Use **Find and Replace** (`Ctrl+H` / `Cmd+H`) to make each substitution:
-
-| Find | Replace With |
-|------|-------------|
-| `YOURCLUSTERNAME` | The cluster name assigned by the instructor |
-| `YOURPULLSECRET` | The pull secret JSON you copied earlier (single line, keep the surrounding single quotes) |
-| `YOURSSHKEY` | The public key from `~/.ssh/ocp4-aws-key.pub` (the full `ssh-ed25519 ...` line, keep the surrounding single quotes) |
-
-After making all three replacements, save the file with `Ctrl+S` / `Cmd+S`.
-
-Take a moment to scroll through the file in VS Code. With syntax highlighting, you can easily see the structure: top-level keys like `compute`, `controlPlane`, and `networking` are clearly distinguished from their nested values. This is one of the advantages of using a proper editor — the structure of the YAML is immediately visible.
+Confirm that `metadata.name` shows your assigned cluster name and that `sshKey` contains your public key (a long string starting with `ssh-ed25519`).
 
 ### Back Up the Configuration
 
