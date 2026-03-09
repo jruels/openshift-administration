@@ -2,6 +2,7 @@
 
 | Machine | Password | Name | Student | Cluster Name | Bastion IP | API URL | Console URL |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| WSAUTO25-115 | TEKwsauto25! | Dharma Gorja | student46 | student46 | 13.56.183.10 | https://api.student46.labfun.org:6443 | https://console-openshift-console.apps.student46.labfun.org |
 | WSAUTO25-91 | TEKwsauto25! | William Adams | student1 | student1 | 3.101.68.26 | https://api.student1.labfun.org:6443 | https://console-openshift-console.apps.student1.labfun.org |
 | WSAUTO25-92 | TEKwsauto25! | Syed Danish Ali | student2 | student2 | 13.57.42.32 | https://api.student2.labfun.org:6443 | https://console-openshift-console.apps.student2.labfun.org |
 | WSAUTO25-93 | TEKwsauto25! | Vinod Asarpota | student3 | student3 | 13.56.250.90 | https://api.student3.labfun.org:6443 | https://console-openshift-console.apps.student3.labfun.org |
@@ -17,8 +18,8 @@
 | WSAUTO25-103 | TEKwsauto25! | Harsha Medicherla | student13 | student13 | 13.56.224.116 | https://api.student13.labfun.org:6443 | https://console-openshift-console.apps.student13.labfun.org |
 | WSAUTO25-104 | TEKwsauto25! | Leonardo Mejia-Centeno | student14 | student14 | 54.67.43.134 | https://api.student14.labfun.org:6443 | https://console-openshift-console.apps.student14.labfun.org |
 | WSAUTO25-105 | TEKwsauto25! | Shiva Muthiki | student15 | student15 | 13.56.149.241 | https://api.student15.labfun.org:6443 | https://console-openshift-console.apps.student15.labfun.org |
-| WSAUTO25-106 | TEKwsauto25! | Suresh Gorja | student16 | student16 | 54.176.70.230 | https://api.student16.labfun.org:6443 | https://console-openshift-console.apps.student16.labfun.org |
-| WSAUTO25-107 | TEKwsauto25! | Malathy Madabusi | student17 | student17 | 52.53.200.84 | https://api.student17.labfun.org:6443 | https://console-openshift-console.apps.student17.labfun.org |
+| WSAUTO25-106 | TEKwsauto25! | Durgaprasad Murari | student16 | student16 | 54.176.70.230 | https://api.student16.labfun.org:6443 | https://console-openshift-console.apps.student16.labfun.org |
+| WSAUTO25-107 | TEKwsauto25! | Shalini Gillella | student17 | student17 | 52.53.200.84 | https://api.student17.labfun.org:6443 | https://console-openshift-console.apps.student17.labfun.org |
 | WSAUTO25-108 | TEKwsauto25! | Chandra Shekar Valaboju | student18 | student18 | 54.183.121.61 | https://api.student18.labfun.org:6443 | https://console-openshift-console.apps.student18.labfun.org |
 | WSAUTO25-109 | TEKwsauto25! | Becky Wang | student19 | student19 | 13.56.78.151 | https://api.student19.labfun.org:6443 | https://console-openshift-console.apps.student19.labfun.org |
 | WSAUTO25-110 | TEKwsauto25! | Yu Wang | student20 | student20 | 54.177.142.93 | https://api.student20.labfun.org:6443 | https://console-openshift-console.apps.student20.labfun.org |
@@ -47,4 +48,3 @@
 | WSAUTO25-139 | TEKwsauto25! | Trung Tran | student43 | student43 | 54.151.38.19 | https://api.student43.labfun.org:6443 | https://console-openshift-console.apps.student43.labfun.org |
 | WSAUTO25-140 | TEKwsauto25! | Alejandro Valdes | student44 | student44 | 54.177.79.254 | https://api.student44.labfun.org:6443 | https://console-openshift-console.apps.student44.labfun.org |
 | WSAUTO25-141 | TEKwsauto25! | Pachiappan Yadav Kumar | student45 | student45 | 13.56.183.10 | https://api.student45.labfun.org:6443 | https://console-openshift-console.apps.student45.labfun.org |
-| WSAUTO25-115 | TEKwsauto25! | Instructor | trainer | trainer | 50.18.225.178 | https://api.trainer.labfun.org:6443 | https://console-openshift-console.apps.trainer.labfun.org |
