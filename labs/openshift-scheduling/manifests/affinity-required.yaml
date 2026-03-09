@@ -1,27 +1,26 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: no-colocate
+  name: affinity-required
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: no-colocate
+      app: affinity-required
   template:
     metadata:
       labels:
-        app: no-colocate
+        app: affinity-required
     spec:
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: env
                 operator: In
                 values:
-                - no-colocate
-            topologyKey: kubernetes.io/hostname
+                - production
       containers:
       - name: nginx
         image: nginx:1.27

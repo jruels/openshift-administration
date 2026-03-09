@@ -1,51 +1,49 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pod-affinity-1
+  name: cache
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      app: pod-affinity-1
-  replicas: 1
+      app: cache
   template:
     metadata:
       labels:
-        app: pod-affinity-1
+        app: cache
     spec:
       containers:
-      - name: k8s-demo
-        image: aslaen/k8s-demo
+      - name: redis
+        image: redis:7-alpine
         ports:
-        - name: nodejs-port
-          containerPort: 3000
+        - containerPort: 6379
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pod-affinity-2
+  name: web
 spec:
+  replicas: 2
   selector:
     matchLabels:
-      app: pod-affinity-2
-  replicas: 1
+      app: web
   template:
     metadata:
       labels:
-        app: pod-affinity-2
+        app: web
     spec:
       affinity:
         podAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: "app"
-                    operator: In
-                    values:
-                    - pod-affinity-1
-              topologyKey: "kubernetes.io/hostname"
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - cache
+            topologyKey: kubernetes.io/hostname
       containers:
-      - name: redis
-        image: redis
+      - name: nginx
+        image: nginx:1.27
         ports:
-        - name: redis-port
-          containerPort: 6379
+        - containerPort: 80

@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: with-toleration
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: with-toleration
+  template:
+    metadata:
+      labels:
+        app: with-toleration
+    spec:
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: special
+        effect: NoSchedule
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80

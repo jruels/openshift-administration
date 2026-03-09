@@ -1,529 +1,661 @@
-# OpenShift Scheduling
-## Node Affinity/Anti-Affinity 
+# Scheduling in OpenShift
 
-Get the list of nodes
-```bash
-oc get nodes 
-```
-You should have 2 nodes
-```bash
-NAME                                        STATUS   ROLES                  AGE     VERSION
-ip-10-0-15-231.us-west-1.compute.internal   Ready    worker                 2d23h   v1.28.10+a2c84a5
-ip-10-0-8-243.us-west-1.compute.internal    Ready    control-plane,master   2d23h   v1.28.10+a2c84a5
-```
+In this lab, you will learn how the Kubernetes scheduler decides where to place Pods and how to influence those decisions. You will work with four scheduling mechanisms:
 
+1. **Node Selectors** — The simplest way to constrain Pods to specific nodes
+2. **Node Affinity** — A more expressive version of node selectors with required and preferred rules
+3. **Taints and Tolerations** — Allow nodes to repel Pods unless they explicitly opt in
+4. **Pod Affinity and Anti-Affinity** — Place Pods relative to other Pods, not just nodes
 
-Set a label on a node that doesn't have a `control-plane` role
-```bash
-oc label nodes <ip-192-168-92-129.us-east-2.compute.internal> disktype=ssd
-```
+Understanding these tools is essential for production clusters where you need to control workload placement for performance, isolation, compliance, or hardware requirements.
 
-Check to make sure node label was applied 
-```bash
-oc describe node <node_chosen_above> | head
-```
+## Cluster Topology
 
-
-
-Install `git`
+Before making scheduling decisions, you need to know what you are working with. List the nodes in your cluster:
 
 ```bash
-sudo dnf -y install git
+oc get nodes
 ```
 
+You should see two nodes — a worker and a control-plane/master:
 
+```
+NAME                                        STATUS   ROLES                  AGE   VERSION
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 ...   v1.34.2
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    control-plane,master   ...   v1.34.2
+```
 
-Clone the manifests to your jump host
+Check for taints, which restrict what can be scheduled on a node:
 
 ```bash
-git clone https://github.com/jruels/openshift-admin.git
+oc describe nodes | grep -A1 "Taints:"
 ```
 
+The master node has a `node-role.kubernetes.io/master:NoSchedule` taint, which means regular workloads cannot run on it. Only the worker node is available for your Pods. This is the default in OpenShift — control-plane nodes are reserved for cluster infrastructure.
 
+## Project Setup
 
-Enter the lab directory. 
+Create a dedicated project for this lab:
 
 ```bash
-cd openshift-admin/labs/openshift-scheduling
+oc new-project scheduling-lab
 ```
 
-
-
-Review YAML. Notice the `nodeSelector`
+Grant the `anyuid` SCC so that nginx containers can run:
 
 ```bash
-vim manifests/ssd_pod.yaml
+oc adm policy add-scc-to-user anyuid -z default -n scheduling-lab
 ```
 
+## Part 1: Node Selectors
 
+A `nodeSelector` is the simplest way to constrain Pods to nodes with specific labels. The scheduler will only place the Pod on nodes whose labels match every key-value pair in the selector.
 
+### Label a node
+
+First, identify your worker node name:
+
+```bash
+WORKER_NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')
+echo $WORKER_NODE
 ```
+
+Add a custom label to simulate a node with SSD storage:
+
+```bash
+oc label nodes $WORKER_NODE disktype=ssd
+```
+
+Verify the label was applied:
+
+```bash
+oc get nodes -l disktype=ssd
+```
+
+You should see your worker node listed.
+
+### Deploy a Pod with nodeSelector
+
+Create a file called `ssd-pod.yaml`:
+
+```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: nginx
+  name: ssd-pod
   labels:
-    env: test
+    app: ssd-test
 spec:
   containers:
   - name: nginx
-    image: nginx
-    imagePullPolicy: IfNotPresent
+    image: nginx:1.27
+    ports:
+    - containerPort: 80
   nodeSelector:
     disktype: ssd
 ```
 
-Deploy application:
-```
-oc create -f manifests/ssd_pod.yaml
+The `nodeSelector` tells the scheduler: only place this Pod on nodes that have the label `disktype=ssd`.
+
+Apply it:
+
+```bash
+oc apply -f ssd-pod.yaml
 ```
 
-Confirm POD was assigned to node with label 
+Verify the Pod was scheduled to the labeled node:
+
+```bash
+oc get pod ssd-pod -o wide
+```
+
+The `NODE` column should show your worker node — the only node with the `disktype=ssd` label.
+
+### Clean up
+
+```bash
+oc delete pod ssd-pod
+oc label nodes $WORKER_NODE disktype-
+```
+
+The trailing `-` after `disktype` removes the label.
+
+## Part 2: Node Affinity
+
+Node affinity is a more expressive version of `nodeSelector`. It supports two rule types:
+
+- **requiredDuringSchedulingIgnoredDuringExecution** — Hard requirement. The Pod will not schedule unless a matching node exists. It stays `Pending` indefinitely until one becomes available.
+- **preferredDuringSchedulingIgnoredDuringExecution** — Soft preference. The scheduler tries to find a matching node but will schedule the Pod elsewhere if no match exists.
+
+The "IgnoredDuringExecution" part means that if a node's labels change after a Pod is already running, the Pod is not evicted.
+
+### Required node affinity
+
+Create a file called `affinity-required.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: affinity-required
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: affinity-required
+  template:
+    metadata:
+      labels:
+        app: affinity-required
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: env
+                operator: In
+                values:
+                - production
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+```
+
+This Deployment requires nodes with the label `env=production`. The `operator: In` means the node's `env` label must have a value that is in the list `[production]`. Other operators include `NotIn`, `Exists`, `DoesNotExist`, `Gt`, and `Lt`.
+
+Apply it:
+
+```bash
+oc apply -f affinity-required.yaml
+```
+
+Check the Pods:
+
+```bash
+oc get pods -l app=affinity-required
+```
 
 ```
-oc get pods -o wide
+NAME                                 READY   STATUS    RESTARTS   AGE
+affinity-required-85dd58687d-xxxxx   0/1     Pending   0          5s
+affinity-required-85dd58687d-yyyyy   0/1     Pending   0          5s
 ```
 
-Now we are going to use `requiredDuringSchedulingIgnoredDuringExecution` and `preferredDuringSchedulingIgnoredDuringExecution` along with `weight` to customize where our Pods are deployed. 
+Both Pods are `Pending` because no node has the label `env=production`. Investigate with `oc describe`:
 
-First deploy our demo app declared in `manifests/node-affinity.yaml` with the `oc apply` command and then check to see which nodes it was scheduled to. 
+```bash
+oc describe pod -l app=affinity-required | grep -A3 "Events:"
 ```
-oc get pods
+
+You will see a `FailedScheduling` event explaining that no nodes match the Pod's node affinity.
+
+### Fix the scheduling issue
+
+Add the required label to the worker node:
+
+```bash
+oc label nodes $WORKER_NODE env=production
+```
+
+Within seconds, the scheduler detects the matching node and places the Pods:
+
+```bash
+oc get pods -l app=affinity-required -o wide
+```
+
+Both Pods should now be `Running` on the worker node.
+
+### Preferred node affinity
+
+Create a file called `affinity-preferred.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: affinity-preferred
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: affinity-preferred
+  template:
+    metadata:
+      labels:
+        app: affinity-preferred
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+              - key: gpu
+                operator: In
+                values:
+                - "true"
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+```
+
+This Deployment prefers nodes with `gpu=true` (weight 80 out of 100), but no node in the cluster has that label.
+
+Apply it:
+
+```bash
+oc apply -f affinity-preferred.yaml
+```
+
+Check the Pods:
+
+```bash
+oc get pods -l app=affinity-preferred -o wide
+```
+
+Both Pods are `Running` — even though no node has the `gpu=true` label. This is the key difference between `required` and `preferred`: preferred rules are best-effort, not mandatory. The scheduler places the Pods on the best available node.
+
+### Clean up
+
+```bash
+oc delete deployment affinity-required affinity-preferred
+oc label nodes $WORKER_NODE env-
+```
+
+## Part 3: Taints and Tolerations
+
+Taints and tolerations work together to control scheduling from the **node's** perspective. A taint on a node says "do not schedule here unless you tolerate me." A toleration on a Pod says "I can handle that taint."
+
+This is the opposite of affinity: affinity attracts Pods to nodes, while taints repel Pods from nodes.
+
+Each taint has three components:
+- **key** — A label-like identifier (e.g., `dedicated`)
+- **value** — An optional value (e.g., `special`)
+- **effect** — What happens to Pods that do not tolerate the taint:
+  - `NoSchedule` — New Pods will not be scheduled (existing Pods remain)
+  - `PreferNoSchedule` — The scheduler tries to avoid the node but may still place Pods there
+  - `NoExecute` — New Pods are rejected AND existing Pods without a matching toleration are evicted
+
+Your cluster already demonstrates taints — the master node has `node-role.kubernetes.io/master:NoSchedule`, which is why your workloads only run on the worker.
+
+### Taint the worker node
+
+Apply a custom taint to the worker node:
+
+```bash
+oc adm taint nodes $WORKER_NODE dedicated=special:NoSchedule
+```
+
+**Note:** OpenShift uses `oc adm taint` instead of `kubectl taint`.
+
+Verify the taint:
+
+```bash
+oc describe node $WORKER_NODE | grep Taints
+```
+
+```
+Taints:             dedicated=special:NoSchedule
+```
+
+Now both nodes have taints — the master with its built-in taint and the worker with your custom one. No regular Pod can schedule anywhere.
+
+### Deploy without a toleration
+
+Create a file called `no-toleration.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-toleration
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: no-toleration
+  template:
+    metadata:
+      labels:
+        app: no-toleration
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+```
+
+Apply it:
+
+```bash
+oc apply -f no-toleration.yaml
+```
+
+Check the Pods:
+
+```bash
+oc get pods -l app=no-toleration
 ```
 
 ```
 NAME                             READY   STATUS    RESTARTS   AGE
-node-affinity-589d989958-8xtf9   0/1     Pending   0          13s
-node-affinity-589d989958-b8hfg   0/1     Pending   0          13s
-node-affinity-589d989958-d6hrq   0/1     Pending   0          13s
+no-toleration-64c84d75cd-xxxxx   0/1     Pending   0          5s
+no-toleration-64c84d75cd-yyyyy   0/1     Pending   0          5s
 ```
 
-Well, they aren't being scheduled to any nodes.  Do some investigation and determine why. 
+Both Pods are `Pending`. Inspect the scheduling failure:
 
-Once you have figured out why the Pods are not being scheduled resolve the issue and redeploy.   
-
-Confirm the pods are now deployed.
-```
-oc get pods -o wide
-
-NAME                             READY   STATUS    RESTARTS   AGE     IP             NODE                     node-affinity-55ddc8fd77-cglzf   1/1     Running   0          2m31s   10.129.0.168   ip-10-0-15-231.us-west-1.compute.internal
-node-affinity-55ddc8fd77-xh9x9   1/1     Running   0          2m31s   10.129.0.170   ip-10-0-15-231.us-west-1.compute.internal
-node-affinity-55ddc8fd77-zl7dg   1/1     Running   0          2m31s   10.129.0.169   ip-10-0-15-231.us-west-1.compute.internal
+```bash
+oc describe pod -l app=no-toleration | grep -A2 "Warning"
 ```
 
-## Cleanup
-```
-oc delete pod nginx 
-oc delete -f manifests/node-affinity.yaml
-```
+The event message says `2 node(s) had untolerated taint(s)` — neither node will accept these Pods.
 
----
+### Deploy with a toleration
 
-## These sections will be demonstrated by the instructor
+Create a file called `with-toleration.yaml`:
 
-
-
-## Pod Affinity/Anti-Affinity
-
-### More Useful Example 
-Kubernetes has built-in node labels that can be used without being applied manually first.
-
-Interpod Affinity and AntiAffinity can be even more useful when they are used with higher level collections such as ReplicaSets, Statefulsets, Deployments, etc. One can easily configure that a set of workloads should be co-located in the same defined topology, eg., the same node.
-
-## Always co-located on the same node
-#### Allow workloads to run on control plane node.
-Prior to this lab we must remove the taint from the control plane so that workloads can run on it.
-```
-oc taint nodes --all node-role.kubernetes.io/control-plane-
-```
-
-In a three node cluster, a web application has in-memory cache such as redis. We want the web-servers to be co-located with the cache as much as possible. Here is the yaml snippet of a simple redis deployment with three replicas and selector label `app=store`. The deployment has `PodAntiAffinity` configured to ensure the scheduler does not co-locate replicas on a single node.
-
-Deploy redis YAML
-```
-oc apply -f manifests/affinity.yaml
-```
-
-```
-apiVersion: apps/v1beta1 
-kind: Deployment
-metadata:
-  name: redis-cache
-spec:
-  replicas: 3
-  template:
-    metadata:
-      labels:
-        app: store
-    spec:
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - store
-            topologyKey: "kubernetes.io/hostname"
-      containers:
-      - name: redis-server
-        image: redis:3.2-alpine
-```
-
-The below yaml snippet of the webserver deployment has podAntiAffinity and podAffinity configured. This informs the scheduler that all its replicas are to be co-located with pods that have selector label `app=store`. This will also ensure that each web-server replica does not co-locate on a single node.
-
-Now let’s deploy the YAML for web servers.
-
-```
-oc apply -f manifests/anti_and_affinity.yaml
-```
-
-```
-apiVersion: apps/v1beta1 
-kind: Deployment
-metadata:
-  name: web-server
-spec:
-  replicas: 3
-  template:
-    metadata:
-      labels:
-        app: web-store
-    spec:
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - web-store
-            topologyKey: "kubernetes.io/hostname"
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - store
-            topologyKey: "kubernetes.io/hostname"
-      containers:
-      - name: web-app
-        image: nginx:1.12-alpine
-```
-
-After creating the above two deployments, our three node cluster should look like below.
-
-
-|	node-1			|		node-2			|		node-3	|		
-|	webserver-1		|	    webserver-2		|	  webserver-3 |
-|	    cache-1		|		cache-2			|	      cache-3      |
-
-As you can see, all 3 replicas of the web-server are automatically co-located with the cache as expected.
-
-To confirm run: 
-`oc get pods -o wide`
-
-Best practice is to configure these highly available stateful workloads such as Redis with AntiAffinity rules for more guaranteed spreading.
-
-Delete both deployments
-```sh
-oc delete -f manifests/anti_and_affinity.yaml
-oc delete -f manifests/affinity.yaml
-```
-
-## Simplified example
-To help understand what just happened here is a simplified example of using `podAffinity` and `podAntiAffinity`. 
-
-The `pod-affinity.yaml` manifest creates 2 deployments, a simple demo application and a `redis` datastore. 
-
-The manifest deploys `pod-affinity-1` without any special labels, but if you look at `pod-affinity-2` you'll see that it is required to run on the same node as `pod-affinity-1`.   
-
-```
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pod-affinity-1
+  name: with-toleration
 spec:
+  replicas: 2
   selector:
     matchLabels:
-      app: pod-affinity-1
-  replicas: 1
+      app: with-toleration
   template:
     metadata:
       labels:
-        app: pod-affinity-1
-    spec:
-      containers:
-      - name: k8s-demo
-        image: aslaen/k8s-demo
-        ports:
-        - name: nodejs-port
-          containerPort: 3000
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: pod-affinity-2
-spec:
-  selector:
-    matchLabels:
-      app: pod-affinity-2
-  replicas: 1
-  template:
-    metadata:
-      labels:
-        app: pod-affinity-2
-    spec:
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: "app"
-                    operator: In
-                    values:
-                    - pod-affinity-1
-              topologyKey: "kubernetes.io/hostname"
-      containers:
-      - name: redis
-        image: redis
-        ports:
-        - name: redis-port
-          containerPort: 6379
-```
-
-Go ahead and create it
-```
-oc apply -f manifests/pod-affinity.yaml
-```
-
-Now if you go check the pods you will see they are running on the same node.  
-
-Scale `pod-affinity-2` and confirm it ends up with `pod-affinity-1`
-```
-oc scale --replicas=4 deployment/pod-affinity-2
-```
-
-Delete the deployment 
-```
-oc delete -f manifests/pod-affinity.yaml
-```
-
-## Cleanup 
-Delete the deployments 
-```
-oc delete -f manifests/pod-affinity.yaml
-```
-
-
-## Never co-located on the same node
-
-In the same directory there is a `pod-anti-affinity.yaml` file 
-
-Again we are deploying `pod-affinity-1` without any special labels, but this is not the case for our other 2 deployments. 
-
-* Deployment `pod-affinity-2` is set to run on the same node as `pod-affinity-1`
-* Deployment `pod-affinity-3` is set to run on a different node than `pod-affinity-1`.
-
-Now deploy and confirm it works. 
-```
-oc apply -f manifests/pod-anti-affinity.yaml
-```
-
-You will now see that 4 deployments were created. 
-
-For our 2 deployments we can see they were scheduled to the same node. 
-
-For our 3rd deployment we can see that it was scheduled to a node that did not have `pod-affinity-1` running on it. 
-
-Confirm that the Pods are scheduled as defined. 
-```
-oc get pods -o wide 
-```
-
-```
-NAME                              READY   STATUS        RESTARTS   AGE   IP            NODE                                          NOMINATED NODE
-pod-affinity-1-5dbcfbc86d-4gmz4   1/1     Running       0          15s   100.96.1.16   ip-172-20-55-161.us-west-1.compute.internal   <none>
-pod-affinity-1-5dbcfbc86d-97shv   1/1     Terminating   0          46s   100.96.3.17   ip-172-20-41-46.us-west-1.compute.internal    <none>
-pod-affinity-2-7c6f9d5f6d-4fblg   1/1     Running       0          15s   100.96.1.17   ip-172-20-55-161.us-west-1.compute.internal   <none>
-pod-affinity-2-7c6f9d5f6d-dkxn5   1/1     Running       0          15s   100.96.3.18   ip-172-20-41-46.us-west-1.compute.internal    <none>
-pod-affinity-2-7c6f9d5f6d-kvrw2   1/1     Running       0          15s   100.96.1.18   ip-172-20-55-161.us-west-1.compute.internal   <none>
-pod-affinity-3-5599479b6d-7w6qs   1/1     Running       0          15s   100.96.2.15   ip-172-20-59-55.us-west-1.compute.internal    <none>
-pod-affinity-3-5599479b6d-nfxx9   1/1     Running       0          15s   100.96.2.16   ip-172-20-59-55.us-west-1.compute.internal    <none>
-pod-affinity-3-5599479b6d-pdpgg   1/1     Running       0          15s   100.96.2.14   ip-172-20-59-55.us-west-1.compute.internal    <none>
-pod-affinity-4-6496648487-9mbtd   0/1     Pending       0          15s   <none>        <none>                                        <none>
-```
-
-
-## Visual example 
-
-Highly Available database statefulset has one master and three replicas, one may prefer none of the database instances to be co-located on the same node.
-
-Using Anti-Affinity we can specify that each of the DB-REPLICAs will be on separate nodes.
-
-|	node-1		|	node-2		|	node-3		|	node-4  |
-|    DB-MASTER	 |   DB-REPLICA-1	 |   DB-REPLICA-2	 |    DB-REPLICA-3   |
-
-
-## Cleanup
-Delete deployments
-```
-oc delete -f manifests/pod-anti-affinity.yaml
-```
-
-# Taint and Tolerations Lab
-Node affinity  is a property of pods that attracts them to a set of nodes (either as a preference or a hard requirement). Taints are the opposite – they allow a node to repel a set of pods. 
-
-Taints and tolerations work together to ensure that pods are not scheduled onto inappropriate nodes. One or more taints are applied to a node; this marks that the node should not accept any pods that do not tolerate the taints. Tolerations are applied to pods, and allow (but do not require) the pods to schedule onto nodes with matching taints.
-
-You add a taint to a node using `oc taint`. For example: 
-```
-oc taint nodes node1 key=value:NoSchedule
-```
-places a taint on node `node1` The taint has key `key`, value `value`, and taint effect `NoSchedule`.
-This means that no pod will be able to schedule onto node1 unless it has a matching toleration. 
-
-You specify a toleration for a pod in the `PodSpec`. Both of the following tolerations “match” the taint created by the `oc taint` line above, and thus a pod with either toleration would be able to schedule onto `node1`:
-
-```
-tolerations:
-- key: "key"
-  operator: "Equal"
-  value: "value"
-  effect: "NoSchedule"
-```
-
-```
-tolerations:
-- key: "key"
-  operator: "Exists"
-  effect: "NoSchedule"
-```
-
-NOTE: An empty `key` with operator `Exists` matches all keys ,values and effects which means it will tolerate everything. 
-```
-tolerations:
-- operator: "Exists"
-```
-
-An empty effect matches all effects with a key `key`
-```
-tolerations:
-- key: "key"
-  operator: "Exists"
-```
-
-## Apply taint to node 
-In this lab we will be applying a taint and then showing how only PODs with an exception are allowed to be scheduled on that node. 
-
-## Get nodes 
-`oc get nodes`
-
-```
-NAME                                           STATUS   ROLES    AGE   VERSION
-ip-192-168-24-236.us-east-2.compute.internal   Ready    <none>   66m   v1.20.10-eks-3bcdcd
-ip-192-168-57-251.us-east-2.compute.internal   Ready    <none>   66m   v1.20.10-eks-3bcdcd
-ip-192-168-92-129.us-east-2.compute.internal   Ready    <none>   66m   v1.20.10-eks-3bcdcd
-```
-
-Apply a taint to the top node. 
-```
-oc taint nodes ip-192-168-24-236.us-east-2.compute.internal dedicated=lab:NoSchedule
-```
-
-## Deploy nginx without toleration
-
-```
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-deployment
-spec:
-  selector:
-    matchLabels:
-      app: nginx
-  replicas: 3
-  template:
-    metadata:
-      labels:
-        app: nginx
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.7.9
-        ports:
-        - containerPort: 80
-```
-
-```
-oc apply -f manifests/nginx_deployment.yaml
-```
-
-You’ll notice it does not get scheduled to the node we tainted above. 
-
-## Update YAML to allow scheduling on tainted node. 
-Edit `manifests/nginx_taint.yaml` and apply a toleration.
-```
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-taint
-spec:
-  selector:
-    matchLabels:
-      app: nginx
-  replicas: 3
-  template:
-    metadata:
-      labels:
-        app: nginx
+        app: with-toleration
     spec:
       tolerations:
-      - key: "dedicated"
-        operator: "Equal"
-        value: "lab"
-        effect: "NoSchedule"
+      - key: dedicated
+        operator: Equal
+        value: special
+        effect: NoSchedule
       containers:
       - name: nginx
-        image: nginx:1.7.9
+        image: nginx:1.27
         ports:
         - containerPort: 80
 ```
 
-```
-oc apply -f manifests/nginx_taint.yaml
+The `tolerations` section says: "This Pod can tolerate nodes with the taint `dedicated=special:NoSchedule`." The toleration must match the taint's key, value, and effect exactly.
+
+Apply it:
+
+```bash
+oc apply -f with-toleration.yaml
 ```
 
-## Confirm nodes are scheduled as expected
-Now confirm only PODs in deployment  `nginx-taint` are running on tainted node. 
-```
-oc get pods -o wide 
+Check both Deployments side by side:
+
+```bash
+oc get pods -o wide
 ```
 
-You should see that PODs in deployment `nginx-deployment` are NOT scheduled on tainted node. 
+You should see the `with-toleration` Pods running on the worker node, while the `no-toleration` Pods remain `Pending`:
 
 ```
-NAME                                READY     STATUS    RESTARTS   AGE       IP          NODE
-nginx-deployment-6c54bd5869-gst9p   1/1       Running   0          10m       10.44.0.2   ip-10-0-100-70
-nginx-deployment-6c54bd5869-nq7kt   1/1       Running   0          10m       10.44.0.3   ip-10-0-100-70
-nginx-deployment-6c54bd5869-p48s2   1/1       Running   0          10m       10.44.0.1   ip-10-0-100-70
-nginx-taint-9764dfc98-6vrwl         1/1       Running   0          8m        10.44.0.4   ip-10-0-100-70
-nginx-taint-9764dfc98-gjv4c         1/1       Running   0          8m        10.36.0.2   ip-10-0-100-102
-nginx-taint-9764dfc98-szmrm         1/1       Running   0          8m        10.36.0.1   ip-10-0-100-102
+NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE
+no-toleration-64c84d75cd-xxxxx     0/1     Pending   0          30s   <none>        <none>
+no-toleration-64c84d75cd-yyyyy     0/1     Pending   0          30s   <none>        <none>
+with-toleration-6bb8b9fd94-xxxxx   1/1     Running   0          10s   10.129.0.91   ip-10-0-xx-xx...
+with-toleration-6bb8b9fd94-yyyyy   1/1     Running   0          10s   10.129.0.92   ip-10-0-xx-xx...
 ```
 
-## Remove taint
-```
-oc taint nodes ip-10-0-100-102 dedicated-
+The toleration acts as a key that unlocks the tainted node. Without it, Pods are locked out.
+
+### Clean up
+
+Remove the custom taint from the worker and delete the Deployments:
+
+```bash
+oc adm taint nodes $WORKER_NODE dedicated-
+oc delete deployment no-toleration with-toleration
 ```
 
-## Cleanup 
-```
-oc delete -f manifests/nginx_deployment.yaml
-oc delete -f manifests/nginx_taint.yaml
+The trailing `-` after `dedicated` removes the taint. Verify:
+
+```bash
+oc describe node $WORKER_NODE | grep Taints
 ```
 
+```
+Taints:             <none>
+```
+
+## Part 4: Pod Affinity and Anti-Affinity
+
+Pod affinity and anti-affinity let you place Pods relative to **other Pods** rather than nodes. This is useful when:
+
+- **Pod affinity** — You want related services on the same node for lower latency (e.g., a web server and its cache)
+- **Pod anti-affinity** — You want replicas spread across nodes for high availability (e.g., database replicas on separate nodes)
+
+Like node affinity, pod affinity supports both `required` and `preferred` variants.
+
+### Pod affinity: co-locate related services
+
+Deploy a cache and a web server that must run on the same node:
+
+Create a file called `pod-affinity.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - cache
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+```
+
+The `web` Deployment has a `podAffinity` rule: it **requires** that web Pods run on the same `kubernetes.io/hostname` (same node) as Pods with label `app=cache`. The `topologyKey` defines what "same location" means — `kubernetes.io/hostname` means the same node, while `topology.kubernetes.io/zone` would mean the same availability zone.
+
+Apply it:
+
+```bash
+oc apply -f pod-affinity.yaml
+```
+
+Verify the Pods are co-located:
+
+```bash
+oc get pods -o wide
+```
+
+All three Pods (1 cache + 2 web) should be on the same node. In this cluster with one schedulable worker, this is the only option, but in a larger cluster the scheduler would place web Pods on whichever node the cache Pod happens to land on.
+
+### Pod anti-affinity: require separation
+
+Anti-affinity is the opposite — it prevents Pods from being co-located. This is how you ensure replicas are spread across nodes for high availability.
+
+Create a file called `pod-anti-affinity.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-colocate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: no-colocate
+  template:
+    metadata:
+      labels:
+        app: no-colocate
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - no-colocate
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+```
+
+This rule says: no two Pods with label `app=no-colocate` may run on the same node. With 2 replicas but only 1 schedulable node, one Pod will be stuck.
+
+Apply it:
+
+```bash
+oc apply -f pod-anti-affinity.yaml
+```
+
+Check the Pods:
+
+```bash
+oc get pods -l app=no-colocate -o wide
+```
+
+```
+NAME                          READY   STATUS    RESTARTS   AGE   IP            NODE
+no-colocate-79f7cfdcb-xxxxx   0/1     Pending   0          8s    <none>        <none>
+no-colocate-79f7cfdcb-yyyyy   1/1     Running   0          8s    10.129.0.96   ip-10-0-xx-xx...
+```
+
+One Pod is `Running` and one is `Pending`. The first Pod scheduled on the worker, but the second cannot go there (anti-affinity) and the master is tainted, so it has nowhere to go.
+
+This demonstrates an important production lesson: **required anti-affinity with more replicas than available nodes will leave Pods unschedulable.** In production clusters with many nodes this is not a problem, but it is something to plan for.
+
+### Pod anti-affinity: prefer separation
+
+The safe alternative is `preferred` anti-affinity, which tries to spread Pods but allows co-location when necessary:
+
+Create a file called `pod-anti-affinity-preferred.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prefer-spread
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prefer-spread
+  template:
+    metadata:
+      labels:
+        app: prefer-spread
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - prefer-spread
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+```
+
+Apply it:
+
+```bash
+oc apply -f pod-anti-affinity-preferred.yaml
+```
+
+Check the Pods:
+
+```bash
+oc get pods -l app=prefer-spread -o wide
+```
+
+Both Pods are `Running` on the same node. The scheduler tried to separate them (weight 100 is the maximum preference), but since there is only one schedulable node, it placed them together anyway. In a cluster with multiple nodes, the scheduler would spread them across different nodes.
+
+This is the recommended approach for most production workloads — `preferred` anti-affinity provides the best possible spreading without risking unschedulable Pods.
+
+### Clean up
+
+```bash
+oc delete deployment cache web no-colocate prefer-spread
+```
+
+## Cleanup
+
+Remove all custom labels from nodes and delete the project:
+
+```bash
+oc label nodes $WORKER_NODE disktype- env- 2>/dev/null
+oc delete project scheduling-lab
+```
+
+## Congratulations
+
+You have learned four scheduling mechanisms that control where Pods run in OpenShift:
+
+- **Node Selectors** are the simplest constraint — Pods only run on nodes with exact label matches.
+- **Node Affinity** adds expressiveness with `required` (hard) and `preferred` (soft) rules, plus operators like `In`, `NotIn`, and `Exists`.
+- **Taints and Tolerations** work from the node's perspective — taints repel all Pods except those with matching tolerations. OpenShift uses this to protect control-plane nodes.
+- **Pod Affinity** co-locates related Pods (e.g., web + cache on the same node), while **Pod Anti-Affinity** separates them for high availability.
+
+The key design decision in production is choosing between `required` and `preferred` rules. Required rules guarantee placement constraints but risk leaving Pods unschedulable. Preferred rules are best-effort but ensure your application always runs, even in degraded conditions.

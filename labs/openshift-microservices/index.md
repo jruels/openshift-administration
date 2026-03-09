@@ -1,90 +1,105 @@
 # Deploy Microservices in OpenShift
 
-### How to deploy full-stack JavaScript microservices in OpenShift
+In this lab, you will deploy a full-stack JavaScript application as microservices in OpenShift. You will learn how OpenShift can build container images directly from source code using Source-to-Image (S2I), how to connect microservices using environment variables, and how to add health checks so OpenShift can monitor your application.
 
-OpenShift is a Kubernetes distribution that makes deploying and scaling applications in the cloud easy. In this hands-on lab, you will learn how to deploy a full-stack JavaScript application in an OpenShift cluster.
+This lab has three parts:
 
-This lab consists of two parts:
+1. **Deploy the front end** from a pre-built container image
+2. **Build and deploy the back end** from source code using S2I
+3. **Connect the services** using environment variables and add health monitoring
 
-- Deploy the front-end container to OpenShift.
+## Why Microservices?
 
-- Deploy and connect the back end to the front end using environment variables, then add a health check.
+Traditional monolithic applications bundle everything — the user interface, business logic, and data access — into a single deployable unit. Microservices split these responsibilities into independent services that can be developed, deployed, and scaled separately.
 
-  
+The application you will deploy is a URL shortener with a React front end and a Node.js back end. Each component runs in its own Pod with its own Service, and they communicate over HTTP. This separation means you can update the front end without touching the back end, scale them independently, and use different technologies for each.
+
+## Project Setup
+
+Create a dedicated project for this lab:
+
+```bash
+oc new-project microservices
+```
+
+## Part 1: Deploy the Front End
+
+The front end is a React application that has already been built and published as a container image on Docker Hub. This is the simplest deployment model — you point OpenShift at an existing image, and it creates all the necessary resources.
 
 ### Deploy the front-end image
 
-Deploy an image hosted at Docker with the latest version of the URL shortener front end. Note that the following command does not include the registry hostname, `docker.io`. This is because if you don't specify a registry host, the default value of docker.io is used.
+The `oc new-app` command can create an application from a container image, a Git repository, or a template. Here you will use it with a container image:
 
 ```bash
-oc new-app nodeshift/urlshortener-front 
+oc new-app nodeshift/urlshortener-front
 ```
 
-OpenShift downloads the image from your registry and creates a new application with it.
+OpenShift pulls the image from Docker Hub and creates three resources:
+- An **ImageStream** that tracks the image
+- A **Deployment** that manages the Pod
+- A **Service** that provides internal networking
 
+### Expose the front end
 
-
-### Expose the application
-
-The front end has been deployed to your cluster, but no one can connect to it yet from outside of the cluster. You need to expose the service created with a route to enable access.
-
-Enter the following command:
+The front end is running inside the cluster, but no one can reach it from outside. Create a Route to expose it:
 
 ```bash
-$ oc expose svc/urlshortener-front --port=8080 
-
+oc expose svc/urlshortener-front --port=8080
 ```
 
-Your application is now fully deployed to OpenShift, and you should be able to see it in the OpenShift Topology view of your application.
+The `--port=8080` flag tells the Route which Service port to target, since this Service exposes multiple ports.
 
-[![Your application is visible in OpenShift's topology view.](https://developers.redhat.com/sites/default/files/styles/article_full_width_1440px_w/public/topology_1.png?itok=e-TEQVPg)](https://developers.redhat.com/sites/default/files/topology_1.png)
+### Verify the front end
 
+Get the Route URL:
 
-
-### Verify the application status
-
-If you click on the **Open URL** button next to your application in the Topology view, it should open your front-end application.
-
-You can view the list of redirection URLs (currently empty) from here. You can also see the form to add new URLs (currently nonworking). Finally, a third link in the navigation bar leads to an "About" page. You can see the status of the Node.js API, the Mongo database, and the redirector service, as shown below.
-
-[![The About page displays information about the components of the application.](https://developers.redhat.com/sites/default/files/styles/article_full_width_1440px_w/public/status_1.png?itok=Y7JhwCCZ)](https://developers.redhat.com/sites/default/files/status_1.png)
-
-
-
-All the indicators are currently red because the front end doesn't have a back end to talk to. We'll address this issue in the second part of the lab.
-
-
-
-
-
-### Deploy the Node.js back end
-
-Now it's time to deploy the back end and connect it to the front end using environment variables, then add a health check.
-
-In this lab's first part, the front-end container was deployed to OpenShift.
-
-OpenShift has several built-in options for application deployment. You will build and deploy a Node.js back end using OpenShift's Source-to-Image) (S2I) toolkit.
-
-### Build the Node.js back end using S2I
-
-Source-to-Image is a toolkit for building containers directly from the source code. To build the Node.js back end from the GitHub source code, you can use the `oc new-app` command you used in Part 1. This time, you must specify the GitHub repository where the source code is located; OpenShift will automatically pick the correct build image (Node.js 18 at this time). The `--context-dir` parameter specifies that the source code is located in the `/back` folder:
-
-```
-oc new-app https://github.com/nodeshift-blog-examples/urlshortener --context-dir=back 
+```bash
+oc get route urlshortener-front
 ```
 
-You should get a message back indicating that a build has started:
+Open the URL from the `HOST/PORT` column in your browser. You should see the URL shortener front end with:
+- A list of redirection URLs (currently empty)
+- A form to add new URLs (not yet functional)
+- An **About** page showing the status of the application components
+
+On the About page, all the status indicators are red because the front end has no back end to talk to. You will fix this in Part 3.
+
+## Part 2: Build and Deploy the Back End
+
+Instead of using a pre-built image, you will build the back end directly from source code using OpenShift's **Source-to-Image (S2I)** toolkit.
+
+### What is Source-to-Image?
+
+S2I is a build process built into OpenShift that:
+1. Detects the programming language from your source code
+2. Selects an appropriate builder image (Node.js, Python, Java, etc.)
+3. Combines your source code with the builder image to produce a runnable container
+4. Pushes the resulting image to the internal registry
+
+This means developers can deploy applications without writing a Dockerfile. OpenShift handles the entire build process.
+
+### Build the back end from GitHub
+
+The back-end source code is in the `/back` directory of a GitHub repository. Use `oc new-app` with the repository URL, specifying both the builder image and the source directory:
+
+```bash
+oc new-app --image-stream="openshift/nodejs:20-ubi9" https://github.com/nodeshift-blog-examples/urlshortener --context-dir=back
+```
+
+Let's break down this command:
+- **--image-stream="openshift/nodejs:20-ubi9"** — Use the Node.js 20 builder image based on Red Hat Universal Base Image 9. OpenShift has multiple Node.js versions available; this flag selects a specific one.
+- **https://github.com/nodeshift-blog-examples/urlshortener** — The Git repository containing the source code.
+- **--context-dir=back** — Only use the `/back` subdirectory of the repository.
+
+You should see output indicating that a build has started:
 
 ```
---> Found image dfd08e2 (2 months old) in image stream "openshift/nodejs" under tag "16-ubi8" for "nodejs"
+--> Found image ... in image stream "openshift/nodejs" under tag "20-ubi9" for "openshift/nodejs:20-ubi9"
 
-    Node.js 16
+    Node.js 20
     ----------
-    Node.js 16 available as container is a base platform for building and running various Node.js 16 applications and frameworks. Node.js is a platform built on Chrome's JavaScript runtime for easily building fast, scalable network applications. Node.js uses an event-driven, non-blocking I/O model that makes it lightweight and efficient, perfect for data-intensive real-time applications that run across distributed devices.
+    Node.js 20 available as container is a base platform for building and running various Node.js 20 applications and frameworks.
 
-    Tags: builder, nodejs, nodejs16
-
-    * The source repository appears to match: nodejs
     * A source build using source code from https://github.com/nodeshift-blog-examples/urlshortener will be created
       * The resulting image will be pushed to image stream tag "urlshortener:latest"
       * Use 'oc start-build' to trigger a new build
@@ -96,149 +111,163 @@ You should get a message back indicating that a build has started:
     service "urlshortener" created
 --> Success
     Build scheduled, use 'oc logs -f buildconfig/urlshortener' to track its progress.
-    Application is not exposed. You can expose services to the outside world by executing one or more of the commands below:
-     'oc expose service/urlshortener'
-    Run 'oc status' to view your app.
 ```
 
-If you head to the **Topology** view in the OpenShift console, you can see that the application is displayed with a white ring around it. This ring indicates that the application is currently being built. The source code is cloned, and the image is built directly on the OpenShift cluster.
+### Monitor the build
 
- 
-
-[![If the application is displayed with a white ring around it, the application image is being built on the OpenShift cluster.](https://developers.redhat.com/sites/default/files/styles/article_floated/public/learn_kubernetes_learning_path_figure_6.png?itok=yMGrCcgR)](https://developers.redhat.com/sites/default/files/learn_kubernetes_learning_path_figure_6.png)
-
-In a few minutes, the ring should turn blue, indicating that the image was successfully built.
-
-### Configure the environment variables
-
-For the purpose of this lab, you'll use environment variables to indicate parameters in the back-end application. You might want to change some of the environmente production server variables in th.
-
-We'll focus here on the back-end application's network port. The Node.js application was running on port 3001 in the development environment, which was set as an environment variable. In this case, you will change the port to 8080.
-
-Click on the **urlshortener** circle denoting your application, and a side panel will open. In this panel, find the **Actions** menu in the top right corner and select **Edit Deployment**.
-
- 
-
-[![To edit the application deployment in the OpenShift console, go to the Actions menu in the top right corner and select Edit Deployment.](https://developers.redhat.com/sites/default/files/styles/article_floated/public/learn_kubernetes_learning_path_figure_7.png?itok=_5kGGSYE)](https://developers.redhat.com/sites/default/files/learn_kubernetes_learning_path_figure_7.png)
-
-A form-based deployment editor is then displayed, where you can see the description of the URL shortener application deployment. Scroll down the page and find the **Environment** section. Add a single variable with the name PORT and the value 8080, as shown below.
-
- 
-
-[![To change the application's port number, locate the Environment section and add PORT 8080.](https://developers.redhat.com/sites/default/files/styles/article_floated/public/learn_kubernetes_learning_path_figure_8.png?itok=ic0kRry0)](https://developers.redhat.com/sites/default/files/learn_kubernetes_learning_path_figure_8.png)
-
-
-
-Click **Save** and go back to the OpenShift Topology view. If you go back fast enough, you might see a double ring around the URL shortener application. This is because OpenShift is currently deploying a new version of the application with the new environment variables. Once this new version is up and running, OpenShift takes the old version down. This process ensures that there is zero downtime when you update your applications.
-
- 
-
-[![A double circle around the application icon shows two application versions co-existing temporarily.](https://developers.redhat.com/sites/default/files/styles/article_floated/public/learn_kubernetes_learning_path_figure_9.png?itok=Hya68OXB)](https://developers.redhat.com/sites/default/files/learn_kubernetes_learning_path_figure_9.png)
-
-
-
-#### Expose the application
-
-Now that you've deployed the application's back end, you can expose it using the same command you used for the front end:
+Follow the build logs in real time:
 
 ```bash
-oc expose svc/urlshortener 
+oc logs -f buildconfig/urlshortener
 ```
 
-There is no need to specify the port in this case because S2I assumed that the application would be running on port 8080.
+You will see OpenShift clone the repository, install Node.js dependencies with `npm install`, and build the container image. This takes a few minutes. When the build completes, you will see `Push successful`.
 
-If you click on the **Open URL** link, you should see a response back from the server:
+Press `Ctrl+C` if the log stream does not exit automatically after the build completes.
 
-```
-{ "msg": "Hello" }
-```
+### Configure the back-end port
 
-You can also try the `/health` route, which should return the server and database status:
+The Node.js application uses an environment variable called `PORT` to determine which port to listen on. The S2I builder expects applications to listen on port 8080. Set this explicitly:
 
-```
-{ "server": true, "database": false } 
+```bash
+oc set env deployment/urlshortener PORT=8080
 ```
 
-You can see the code for this `/health` route below.
+This triggers a new rollout of the Deployment with the updated environment variable. OpenShift performs a rolling update — the new Pod starts before the old one is removed, ensuring zero downtime.
 
+### Expose the back end
 
+Create a Route for the back end:
 
-```javascript
- console.log("Testing database connection");
-  await client.connect().then(() => {
-    console.log("Connected");
-    dbStatus = true;
-  }).catch(e => {
-    console.log("Failed to connect");
+```bash
+oc expose svc/urlshortener
 ```
 
+There is no need to specify the port because the S2I builder configured the Service to use port 8080 by default.
 
+### Test the back end
+
+Get the back-end Route URL:
+
+```bash
+oc get route urlshortener
+```
+
+Test the root endpoint:
+
+```bash
+curl -s http://$(oc get route urlshortener -o jsonpath='{.spec.host}')
+```
+
+You should see:
+
+```
+{"msg":"Hello"}
+```
+
+Test the health endpoint:
+
+```bash
+curl -s http://$(oc get route urlshortener -o jsonpath='{.spec.host}')/health
+```
+
+You should see:
+
+```
+{"server":true,"database":false}
+```
+
+The server is running (`true`), but there is no MongoDB database deployed (`false`). This is expected for this lab.
+
+## Part 3: Connect the Services
+
+Now you will connect the front end to the back end and add health monitoring.
 
 ### Add a health check
 
-OpenShift can periodically check your pod to see whether it is still running. This process is called a *health check*. In the side panel, when you clicked on the **urlshortener** deployment, you might have noticed a message recommending that you add health checks. Go ahead and click on **Add Health Checks**.
+OpenShift can periodically call an endpoint on your Pod to verify the application is still responding. This is called a **liveness probe**. If the probe fails repeatedly, OpenShift restarts the Pod automatically.
 
- 
-
-[![In the side panel, click on Add Health Checks to periodically check your pod to see whether it is still running.](https://developers.redhat.com/sites/default/files/styles/article_floated/public/learn_kubernetes_learning_path_figure_10.png?itok=Zs-Hx7ww)](https://developers.redhat.com/sites/default/files/learn_kubernetes_learning_path_figure_10.png)
-
-
-
-From the next screen, you can add a liveness probe, a health check that monitors your application by periodically calling the specified route. As long as the route returns a 200 HTTP code, OpenShift assumes that the application is still running.
-
-To add this health check, click **Add Liveness Probe**. Change the path to `/health` and keep all the other default values.
-
-To save the health check, click the checkmark at the bottom of the dashed area and then the blue Add button.
-
-To validate that the probe is working, visit the **Resources** tab from the deployment side panel and click **View Logs** next to the pod name. This screen shows you the pod logs; you should see the request to `/health` every 10 seconds.
-
-### Link the front end and back end
-
-Now that the back end is up and running, we need to adda value for the `$BASE_URL` environment variable.
-
-
-
-### Add the BASE_URL environment variable
-
-You can add environment variables using the `oc` CLI tool, but before you do that, you need to find the `BASE_URL` that the front end needs to connect to. This base URL is the route to your back end. You can find this route by running the `get route` command:
-
-```
-oc get route urlshortener
-
-NAME           HOST/PORT                                                         PATH   SERVICES       PORT       TERMINATION   WILDCARD
-urlshortener   urlshortener-joelphy-dev.apps.sandbox.x8i5.p1.openshiftapps.com          urlshortener   8080-tcp                 None
-```
-
-If you want to get only the actual route:
-
-##### Bash:
-
-You can use `awk` to extract it:
+Add a liveness probe that calls the `/health` endpoint every 10 seconds:
 
 ```bash
-oc get route urlshortener | awk 'NR>1 {print $2}' 
+oc set probe deployment/urlshortener --liveness --get-url=http://:8080/health --initial-delay-seconds=10 --period-seconds=10
 ```
 
+- **--liveness** — This is a liveness probe (checks if the application is alive).
+- **--get-url=http://:8080/health** — Send an HTTP GET to port 8080 on the `/health` path. As long as it returns an HTTP 200 status code, the Pod is considered healthy.
+- **--initial-delay-seconds=10** — Wait 10 seconds after the container starts before sending the first probe. This gives the application time to initialize.
+- **--period-seconds=10** — Check every 10 seconds.
 
-
-##### Bash:
+Verify the probe was added:
 
 ```bash
-oc set env deployment/urlshortener-front BASE_URL=http://$(oc get route urlshortener | awk 'NR>1 {print $2}')
-deployment.apps/urlshortener-front updated
+oc describe deployment/urlshortener | grep -A5 "Liveness"
 ```
 
-Now that you have configured the `BASE_URL` environment variable, you can go back to the URL shortener application and check its About page again. Figure 6 shows the current service status on the About page.
+You should see:
 
- 
+```
+    Liveness:   http-get http://:8080/health delay=10s timeout=1s period=10s #success=1 #failure=3
+```
 
-[![The About page shows the service status is "Up and running."](https://developers.redhat.com/sites/default/files/styles/article_floated/public/learn_kubernetes_learning_path_figure_11.png?itok=emWIzIM-)](https://developers.redhat.com/sites/default/files/learn_kubernetes_learning_path_figure_11.png)
+You can confirm the probe is working by checking the back-end Pod logs. You should see periodic `GET /health` requests:
 
+```bash
+oc logs deployment/urlshortener --tail=5
+```
 
+### Link the front end to the back end
 
-You can see that the server is now up and running.
+The front-end application uses a `BASE_URL` environment variable to know where the back end is. You need to set this to the back-end Route URL.
 
-### Conclusion to Lesson 2
+Get the back-end Route and set it as an environment variable on the front-end Deployment in a single command:
 
-The database and redirector services are still unreachable because you have not deployed them. You will add those in upcoming labs.
+```bash
+oc set env deployment/urlshortener-front BASE_URL=http://$(oc get route urlshortener -o jsonpath='{.spec.host}')
+```
 
+This triggers a new rollout of the front-end Deployment with the `BASE_URL` configured.
+
+### Verify the connection
+
+Wait a few seconds for the new front-end Pod to start, then open the front end in your browser:
+
+```bash
+oc get route urlshortener-front -o jsonpath='{.spec.host}'
+```
+
+Navigate to the **About** page. The **Node.js API** status indicator should now show green with "Up and running." The **Database** and **Redirector** indicators remain red because those services are not deployed in this lab.
+
+### Review all resources
+
+View everything that was created in this project:
+
+```bash
+oc get all
+```
+
+You should see:
+- Two Deployments (front end and back end)
+- A completed Build Pod from the S2I process
+- Two Services for internal communication
+- Two Routes for external access
+- A BuildConfig and ImageStream for the S2I-built back end
+
+## Cleanup
+
+Delete the project and all resources:
+
+```bash
+oc delete project microservices
+```
+
+## Congratulations
+
+You have deployed a microservices application in OpenShift using two different methods:
+
+- **Pre-built container images** — The front end was deployed from a Docker Hub image using `oc new-app`. This is the simplest approach when images are already available.
+- **Source-to-Image (S2I)** — The back end was built directly from GitHub source code. OpenShift detected the Node.js runtime, built the container, and pushed it to the internal registry — no Dockerfile required.
+- **Environment variables** connected the two services, demonstrating how microservices communicate in a loosely coupled way.
+- **Liveness probes** allow OpenShift to continuously monitor the back end and automatically restart it if it stops responding.
+
+These patterns — deploying from images, building from source, connecting services through configuration, and adding health monitoring — are the foundation of running production microservices in OpenShift.
