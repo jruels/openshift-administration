@@ -536,7 +536,7 @@ For the remaining labs, keep your VS Code session connected to the bastion host.
 
 ---
 
-## Reference: Prerequisite Setup (Instructor Use)
+## Reference: Prerequisite Setup
 
 The steps below document how the prerequisites for this lab were created. Students do not need to perform these steps — they are included for completeness and for instructors setting up new training environments.
 
