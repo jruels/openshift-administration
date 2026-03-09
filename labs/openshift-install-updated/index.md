@@ -305,7 +305,7 @@ wget -q -O ~/ocp-install/install-config.yaml https://raw.githubusercontent.com/j
 The configuration file has two placeholders that need to be replaced: the cluster name and the SSH public key. Run the following commands in the terminal, replacing `studentN` with your assigned cluster name (e.g., `student1`, `student2`):
 
 ```bash
-sed -i "s/studentN/YOUR_STUDENT_NAME/" ~/ocp-install/install-config.yaml
+sed -i "s/studentN/YOUR_STUDENT_NUMBER/" ~/ocp-install/install-config.yaml
 ```
 
 For example, if you are student 3:
