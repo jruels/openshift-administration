@@ -103,17 +103,6 @@ ssh-keygen -t ed25519 -N '' -f ${HOME}/.ssh/ocp4-aws-key
 - **`-N ''`** — Set an empty passphrase (acceptable for a lab; in production you would use a passphrase or a key agent).
 - **`-f`** — Write the key pair to a specific file path.
 
-View the public key — you will need this value in a later step. In the VS Code file explorer, navigate to `/home/ec2-user/.ssh/` and open `ocp4-aws-key.pub`. You can also open it from the terminal:
-
-```bash
-code ${HOME}/.ssh/ocp4-aws-key.pub
-```
-
-Copy the entire contents of this file and save it somewhere accessible (a new untitled tab in VS Code, a text file, etc.). It will look similar to:
-
-```
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... ec2-user@ip-172-31-x-x.us-west-1.compute.internal
-```
 
 ## Verify AWS Credentials
 
