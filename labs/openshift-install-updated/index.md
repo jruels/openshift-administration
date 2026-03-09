@@ -297,7 +297,7 @@ mkdir -p ~/ocp-install
 The `install-config.yaml` file is included in this lab's GitHub repository. Download it directly to the bastion using the terminal:
 
 ```bash
-wget -q -O ~/ocp-install/install-config.yaml https://raw.githubusercontent.com/jruels/openshift-admin/main/labs/openshift-install-updated/install-config.yaml
+wget -q -O ~/ocp-install/install-config.yaml https://raw.githubusercontent.com/jruels/openshift-administration/main/labs/openshift-install-updated/install-config.yaml
 ```
 
 ### Edit the Configuration File
