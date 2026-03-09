@@ -115,42 +115,17 @@ Copy the entire contents of this file and save it somewhere accessible (a new un
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... ec2-user@ip-172-31-x-x.us-west-1.compute.internal
 ```
 
-## Configure AWS Credentials
+## Verify AWS Credentials
 
-The OpenShift installer needs AWS API access to create all the infrastructure described earlier. It reads credentials from the standard AWS credentials file, the same file used by the AWS CLI.
+The OpenShift installer needs AWS API access to create all the infrastructure described earlier. It reads credentials from the standard AWS credentials file (`~/.aws/credentials`), the same file used by the AWS CLI. These credentials have already been configured on your bastion host.
 
-In the VS Code integrated terminal, create the credentials directory and files. These are short configuration files for the AWS CLI, so the fastest approach is to create them directly in the terminal:
-
-```bash
-mkdir -p ~/.aws
-```
-
-Create the credentials file, replacing the placeholder values with the credentials provided by the instructor:
-
-```bash
-cat > ~/.aws/credentials << EOF
-[default]
-aws_access_key_id = <YOUR_ACCESS_KEY_ID>
-aws_secret_access_key = <YOUR_SECRET_ACCESS_KEY>
-EOF
-```
-
-Create the region configuration file. We use `us-west-1` (Northern California) for this lab. The installer will create all resources in this region:
-
-```bash
-cat > ~/.aws/config << EOF
-[default]
-region = us-west-1
-EOF
-```
-
-Verify the credentials work by running the following in the integrated terminal:
+Verify they work by running the following in the integrated terminal:
 
 ```bash
 aws sts get-caller-identity
 ```
 
-You should see output showing your account ID and IAM user ARN. If you get an error, open the credentials file in VS Code and double-check that you copied the values correctly.
+You should see output showing the account ID and IAM user ARN. If you get an error, notify the instructor.
 
 ## Install the OpenShift Tools
 
