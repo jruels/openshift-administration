@@ -83,28 +83,30 @@ This means developers can deploy applications without writing a Dockerfile. Open
 The back-end source code is in the `/back` directory of a GitHub repository. Use `oc new-app` with the repository URL, specifying both the builder image and the source directory:
 
 ```bash
-oc new-app --image-stream="openshift/nodejs:20-ubi9" https://github.com/nodeshift-blog-examples/urlshortener --context-dir=back
+oc new-app registry.access.redhat.com/ubi9/nodejs-20~https://github.com/nodeshift-blog-examples/urlshortener --context-dir=back
 ```
 
 Let's break down this command:
-- **--image-stream="openshift/nodejs:20-ubi9"** — Use the Node.js 20 builder image based on Red Hat Universal Base Image 9. OpenShift has multiple Node.js versions available; this flag selects a specific one.
+- **registry.access.redhat.com/ubi9/nodejs-20** — The Node.js 20 S2I builder image from Red Hat's public (unauthenticated) container registry. The `~` separates the builder image from the source code URL — this tells OpenShift to use S2I.
 - **https://github.com/nodeshift-blog-examples/urlshortener** — The Git repository containing the source code.
 - **--context-dir=back** — Only use the `/back` subdirectory of the repository.
 
 You should see output indicating that a build has started:
 
 ```
---> Found image ... in image stream "openshift/nodejs" under tag "20-ubi9" for "openshift/nodejs:20-ubi9"
+--> Found container image ... (registry.access.redhat.com/ubi9/nodejs-20) ...
 
     Node.js 20
     ----------
     Node.js 20 available as container is a base platform for building and running various Node.js 20 applications and frameworks.
 
+    * An image stream tag will be created as "nodejs-20:latest" that will track the source image
     * A source build using source code from https://github.com/nodeshift-blog-examples/urlshortener will be created
       * The resulting image will be pushed to image stream tag "urlshortener:latest"
       * Use 'oc start-build' to trigger a new build
 
 --> Creating resources ...
+    imagestream.image.openshift.io "nodejs-20" created
     imagestream.image.openshift.io "urlshortener" created
     buildconfig.build.openshift.io "urlshortener" created
     deployment.apps "urlshortener" created
