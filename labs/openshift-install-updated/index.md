@@ -103,6 +103,17 @@ ssh-keygen -t ed25519 -N '' -f ${HOME}/.ssh/ocp4-aws-key
 - **`-N ''`** — Set an empty passphrase (acceptable for a lab; in production you would use a passphrase or a key agent).
 - **`-f`** — Write the key pair to a specific file path.
 
+View the public key — you will need this value in a later step. In the VS Code file explorer, navigate to `/home/ec2-user/.ssh/` and open `ocp4-aws-key.pub`. You can also open it from the terminal:
+
+```bash
+code ${HOME}/.ssh/ocp4-aws-key.pub
+```
+
+Copy the entire contents of this file and save it somewhere accessible (a new untitled tab in VS Code, a text file, etc.). It will look similar to:
+
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... ec2-user@ip-172-31-x-x.us-west-1.compute.internal
+```
 
 ## Verify AWS Credentials
 
@@ -284,13 +295,15 @@ The public key from the key pair you generated earlier. Embedded into every node
 
 Now that you understand what every field does, let's prepare the configuration file and run the installer.
 
-### Create the Installation Directory
+### Create a Clean Installation Directory
 
-The installer writes all generated assets (Kubernetes manifests, Ignition configs, credentials) into a directory you specify. In the VS Code integrated terminal, create a dedicated directory:
+The installer writes all generated assets (Kubernetes manifests, Ignition configs, credentials) into a directory you specify. It is critical that this directory starts clean — leftover files from a previous attempt will cause problems. In the VS Code integrated terminal, run:
 
 ```bash
-mkdir -p ~/ocp-install
+rm -rf ~/ocp-install && mkdir -p ~/ocp-install
 ```
+
+If this is your first time, there is nothing to remove, but this command is safe to run regardless.
 
 ### Get the Configuration File onto the Bastion
 
@@ -300,12 +313,20 @@ The `install-config.yaml` file is included in this lab's GitHub repository. Down
 wget -q -O ~/ocp-install/install-config.yaml https://raw.githubusercontent.com/jruels/openshift-administration/main/labs/openshift-install-updated/install-config.yaml
 ```
 
+Verify the file was downloaded:
+
+```bash
+ls ~/ocp-install/install-config.yaml
+```
+
+You should see the file path printed back. If you get "No such file or directory", re-run the `wget` command above.
+
 ### Edit the Configuration File
 
 The configuration file has two placeholders that need to be replaced: the cluster name and the SSH public key. Run the following commands in the terminal, replacing `studentN` with your assigned cluster name (e.g., `student1`, `student2`):
 
 ```bash
-sed -i "s/studentN/YOUR_STUDENT_NUMBER/" ~/ocp-install/install-config.yaml
+sed -i "s/studentN/YOUR_STUDENT_NAME/" ~/ocp-install/install-config.yaml
 ```
 
 For example, if you are student 3:
@@ -349,36 +370,37 @@ To customize infrastructure settings, you first generate the installation manife
 This command reads your `install-config.yaml` and generates all the Kubernetes manifests the installer will use. Note that it **consumes** the `install-config.yaml` file (this is why you made a backup earlier):
 
 ```bash
-openshift-install create manifests --dir=~/ocp-install
+openshift-install create manifests --dir=$HOME/ocp-install
 ```
 
 You will see output listing the generated manifest files. The directory now contains `manifests/` and `openshift/` subdirectories with YAML files for every cluster component.
 
 ### Configure NLB for the Ingress Controller
 
-Open the ingress controller manifest in VS Code:
+Open the ingress configuration manifest in VS Code:
 
 ```bash
-code ~/ocp-install/manifests/cluster-ingress-default-ingresscontroller.yaml
+code ~/ocp-install/manifests/cluster-ingress-02-config.yml
 ```
 
-Replace the entire contents of the file with the following:
+You will see a section that specifies the load balancer type as `Classic`:
 
 ```yaml
-apiVersion: operator.openshift.io/v1
-kind: IngressController
-metadata:
-  name: default
-  namespace: openshift-ingress-operator
-spec:
-  endpointPublishingStrategy:
-    type: LoadBalancerService
-    loadBalancer:
-      scope: External
-      providerParameters:
-        type: AWS
-        aws:
-          type: NLB
+  loadBalancer:
+    platform:
+      aws:
+        type: Classic
+      type: AWS
+```
+
+Change `Classic` to `NLB`:
+
+```yaml
+  loadBalancer:
+    platform:
+      aws:
+        type: NLB
+      type: AWS
 ```
 
 Save the file. This tells the ingress operator to create a Network Load Balancer instead of a Classic Load Balancer for the default router.
@@ -388,7 +410,7 @@ Save the file. This tells the ingress operator to create a Network Load Balancer
 Now start the installer. Since the manifests already exist, the installer will use them directly:
 
 ```bash
-openshift-install create cluster --dir=~/ocp-install --log-level=info
+openshift-install create cluster --dir=$HOME/ocp-install --log-level=info
 ```
 
 - **`--log-level=info`** — Show informational messages. You can use `debug` for more verbose output if you need to troubleshoot.
@@ -451,13 +473,13 @@ INFO Login to the console with user: "kubeadmin", and password: "<generated-pass
 The installer generates a `kubeconfig` file containing the credentials needed to authenticate to the cluster API. Export it as an environment variable so that `oc` knows where to find it. In the VS Code integrated terminal, run:
 
 ```bash
-export KUBECONFIG=~/ocp-install/auth/kubeconfig
+export KUBECONFIG=$HOME/ocp-install/auth/kubeconfig
 ```
 
 To make this permanent so it persists across terminal sessions:
 
 ```bash
-echo 'export KUBECONFIG=~/ocp-install/auth/kubeconfig' >> ~/.bashrc
+echo 'export KUBECONFIG=$HOME/ocp-install/auth/kubeconfig' >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -525,7 +547,7 @@ For the remaining labs, keep your VS Code session connected to the bastion host.
 
 ---
 
-## Reference: Prerequisite Setup
+## Reference: Prerequisite Setup (Instructor Use)
 
 The steps below document how the prerequisites for this lab were created. Students do not need to perform these steps — they are included for completeness and for instructors setting up new training environments.
 
