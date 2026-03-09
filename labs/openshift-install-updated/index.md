@@ -127,34 +127,14 @@ aws sts get-caller-identity
 
 You should see output showing the account ID and IAM user ARN. If you get an error, notify the instructor.
 
-## Install the OpenShift Tools
+## Verify the OpenShift Tools
 
-You need two tools from Red Hat:
+Two tools from Red Hat have already been installed on your bastion host:
 
 - **`oc`** — The OpenShift command-line client. This is a superset of `kubectl` that adds OpenShift-specific commands (projects, routes, builds, etc.). You will use `oc` for all cluster interactions after installation.
 - **`openshift-install`** — The installer binary. It reads your configuration file, calls the AWS API to provision infrastructure, waits for the cluster to bootstrap, and reports the credentials when finished.
 
-In the VS Code integrated terminal, download both from the official Red Hat mirror:
-
-```bash
-wget -q https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz
-wget -q https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-install-linux.tar.gz
-```
-
-Extract them:
-
-```bash
-tar -xf openshift-client-linux.tar.gz
-tar -xf openshift-install-linux.tar.gz
-```
-
-Move the binaries to a directory on your `PATH` so you can run them from anywhere:
-
-```bash
-sudo mv oc kubectl openshift-install /usr/local/bin/
-```
-
-Verify the installation:
+Verify they are available by running the following in the integrated terminal:
 
 ```bash
 openshift-install version
