@@ -6,6 +6,7 @@ This site includes the labs for the OpenShift Admin and Scaling class
 ## Labs
 
 [Lab environment information](bastion-list.md)   
+[Lab environment information Group B](bastion-list_groupb.md)   
 
 ### Day 1
 Lab 1: [Deploying an OpenShift Cluster](labs/openshift-install-updated)    
