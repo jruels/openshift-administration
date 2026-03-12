@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Installing an OpenShift Cluster on AWS</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="installing-an-openshift-cluster-on-aws">Installing an OpenShift Cluster on AWS</h1>
+<p>In this lab, you will install a fully functional OpenShift Container Platform cluster on Amazon Web Services. Rather than clicking through a web console, you will work with the OpenShift installer and a declarative YAML configuration file — the same approach used in production environments. By the end, you will understand every component the installer creates, why each piece is necessary, and how to connect to your running cluster.</p>
+<h2 id="what-you-will-build">What You Will Build</h2>
+<p>The installer creates the following AWS infrastructure on your behalf:</p>
+<ul>
+<li>A <strong>VPC</strong> with public and private subnets across availability zones</li>
+<li><strong>EC2 instances</strong> for the control plane (master) and compute (worker) nodes</li>
+<li><strong>Network Load Balancers</strong> for the Kubernetes API (<code>api.&lt;cluster&gt;.&lt;domain&gt;</code>) and application traffic (<code>*.apps.&lt;cluster&gt;.&lt;domain&gt;</code>)</li>
+<li><strong>Route 53 DNS records</strong> so that clients can resolve the API and application endpoints</li>
+<li><strong>IAM roles and instance profiles</strong> so the nodes can interact with AWS services</li>
+<li><strong>Security groups</strong> that control network access between nodes, load balancers, and the internet</li>
+</ul>
+<p>Understanding this is important: the OpenShift installer is not just copying files to a server. It is provisioning an entire cloud environment designed for production workloads.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<p>The following resources have already been prepared for this training environment:</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AWS Account</strong></td>
+<td>An IAM user with <code>AdministratorAccess</code> has been created</td>
+</tr>
+<tr>
+<td><strong>DNS Domain</strong></td>
+<td>A Route 53 hosted zone for your base domain already exists</td>
+</tr>
+<tr>
+<td><strong>Bastion Host</strong></td>
+<td>An EC2 instance you will connect to from VS Code</td>
+</tr>
+<tr>
+<td><strong>Pull Secret</strong></td>
+<td>Already included in the configuration file — no Red Hat account needed</td>
+</tr>
+</tbody>
+</table>
+<p>If you were setting this up from scratch, you would need to register a domain in Route 53 (which automatically creates a hosted zone), create an IAM user with admin permissions, and launch a bastion host. These steps are documented in the reference section at the end of this lab.</p>
+<h2 id="set-up-vs-code-for-remote-development">Set Up VS Code for Remote Development</h2>
+<p>Throughout this course, you will use <strong>Visual Studio Code</strong> as your primary tool for editing files and running terminal commands on the bastion host. VS Code's <strong>Remote - SSH</strong> extension lets you open a full editor session on a remote machine — you get syntax highlighting, file browsing, multi-file editing, and an integrated terminal, all running against the bastion host as if it were local.</p>
+<p>This is a significant improvement over working with command-line text editors like <code>vi</code>. You can see the entire file, make precise edits visually, and keep multiple files open at once.</p>
+<h3 id="download-the-lab-ssh-key">Download the Lab SSH Key</h3>
+<p>At the top of the lab page, click <strong>View on GitHub</strong>. Click the green <strong>Code</strong> button in the top right corner, then click <strong>Download as zip</strong>. Extract the zip file and note the location of the <code>keys</code> directory — it contains the <code>lab.pem</code> file you will need.</p>
+<h3 id="set-key-permissions-maclinux-only">Set Key Permissions (Mac/Linux only)</h3>
+<p>SSH requires that private key files be unreadable by other users. Open a local terminal and run:</p>
+<pre><code class="language-bash">chmod 600 /path/to/keys/lab.pem
+</code></pre>
+<p>Replace <code>/path/to/keys/</code> with the actual path where you extracted the lab files. Windows users can skip this step — downloaded files on Windows have restricted permissions by default.</p>
+<h3 id="create-an-ssh-config-file">Create an SSH Config File</h3>
+<p>An SSH config file tells VS Code (and the <code>ssh</code> command) how to connect to a host by name, without having to remember IP addresses, usernames, and key paths every time. This is the same file that system administrators use to manage dozens or hundreds of servers.</p>
+<p>Open VS Code and press <code>Ctrl+Shift+P</code> (Windows/Linux) or <code>Cmd+Shift+P</code> (Mac) to open the <strong>Command Palette</strong>. Type <code>Remote-SSH: Open SSH Configuration File</code> and select it. VS Code will present a list of config file paths — select the <strong>first option</strong> in the list. This is the user-level SSH config file and is the correct choice on both Mac/Linux and Windows.</p>
+<p>If the file does not exist, VS Code will create it for you. Add the following entry:</p>
+<pre><code>Host bastion
+    HostName &lt;BASTION_IP&gt;
+    User ec2-user
+    IdentityFile /path/to/keys/lab.pem
+</code></pre>
+<p>Replace:
+- <code>&lt;BASTION_IP&gt;</code> — The IP address provided by the instructor
+- <code>/path/to/keys/lab.pem</code> — The full path to the SSH key you downloaded. Forward-slash paths (e.g., <code>C:/Users/YourName/Downloads/keys/lab.pem</code>) work on all platforms, including Windows.</p>
+<p>Save the file.</p>
+<h3 id="connect-to-the-bastion-host">Connect to the Bastion Host</h3>
+<p>Now use the Remote Explorer to connect:</p>
+<ol>
+<li>Click the <strong>Remote Explorer</strong> icon in the VS Code sidebar (it looks like a monitor icon).</li>
+<li>You should see <strong>bastion</strong> listed under the SSH section.</li>
+<li>Click the connect icon next to <strong>bastion</strong> (or right-click and select <strong>Connect in Current Window</strong>).</li>
+<li>VS Code will ask you to select the platform of the remote host — choose <strong>Linux</strong>.</li>
+<li>The first connection takes a moment while VS Code installs its server component on the bastion. Once connected, the bottom-left corner of VS Code will show <code>SSH: bastion</code>.</li>
+</ol>
+<p>You now have a full VS Code session running on the bastion host. The file explorer on the left shows the bastion's filesystem, and any terminal you open runs commands on the bastion.</p>
+<h3 id="open-a-terminal">Open a Terminal</h3>
+<p>Open the integrated terminal by pressing <code>Ctrl+`</code> (backtick) or going to <strong>Terminal &gt; New Terminal</strong> in the menu bar. This terminal is running on the bastion host — every command you type here executes remotely, just as if you had SSH'd in from a traditional terminal.</p>
+<p>You will use this integrated terminal for all the commands in the rest of this lab.</p>
+<h2 id="generate-an-ssh-key-pair">Generate an SSH Key Pair</h2>
+<p>The OpenShift installer embeds an SSH <strong>public</strong> key into every cluster node it provisions. This allows you to SSH directly into the nodes later for debugging — the key is added to the <code>authorized_keys</code> file for the <code>core</code> user on each node.</p>
+<p>We use the Ed25519 algorithm because it produces shorter keys with stronger security than RSA, and it is the recommended key type for modern systems.</p>
+<p>In the VS Code integrated terminal, run:</p>
+<pre><code class="language-bash">ssh-keygen -t ed25519 -N '' -f ${HOME}/.ssh/ocp4-aws-key
+</code></pre>
+<ul>
+<li><strong><code>-t ed25519</code></strong> — Use the Ed25519 algorithm.</li>
+<li><strong><code>-N ''</code></strong> — Set an empty passphrase (acceptable for a lab; in production you would use a passphrase or a key agent).</li>
+<li><strong><code>-f</code></strong> — Write the key pair to a specific file path.</li>
+</ul>
+<h2 id="verify-aws-credentials">Verify AWS Credentials</h2>
+<p>The OpenShift installer needs AWS API access to create all the infrastructure described earlier. It reads credentials from the standard AWS credentials file (<code>~/.aws/credentials</code>), the same file used by the AWS CLI. These credentials have already been configured on your bastion host.</p>
+<p>Verify they work by running the following in the integrated terminal:</p>
+<pre><code class="language-bash">aws sts get-caller-identity
+</code></pre>
+<p>You should see output showing the account ID and IAM user ARN. If you get an error, notify the instructor.</p>
+<h2 id="verify-the-openshift-tools">Verify the OpenShift Tools</h2>
+<p>Two tools from Red Hat have already been installed on your bastion host:</p>
+<ul>
+<li><strong><code>oc</code></strong> — The OpenShift command-line client. This is a superset of <code>kubectl</code> that adds OpenShift-specific commands (projects, routes, builds, etc.). You will use <code>oc</code> for all cluster interactions after installation.</li>
+<li><strong><code>openshift-install</code></strong> — The installer binary. It reads your configuration file, calls the AWS API to provision infrastructure, waits for the cluster to bootstrap, and reports the credentials when finished.</li>
+</ul>
+<p>Verify they are available by running the following in the integrated terminal:</p>
+<pre><code class="language-bash">openshift-install version
+</code></pre>
+<pre><code class="language-bash">oc version --client
+</code></pre>
+<p>You should see version numbers for both tools. Note the OpenShift version — this is the version of the cluster you are about to install.</p>
+<h2 id="understand-the-installation-configuration">Understand the Installation Configuration</h2>
+<p>The OpenShift installer uses a file called <code>install-config.yaml</code> to determine exactly what to build. This is the single most important file in the installation process — it controls everything from how many nodes to create, to which AWS region to use, to what networking configuration the cluster will have.</p>
+<p>Instead of running the installer's interactive prompts (which ask you the same questions one at a time), we will use a pre-built configuration file. This approach is repeatable, scriptable, and — most importantly — lets you see every setting in one place so you can understand what each one does.</p>
+<p>A copy of <code>install-config.yaml</code> is included in this lab's directory. Let's examine it section by section.</p>
+<h3 id="the-full-configuration-file">The Full Configuration File</h3>
+<pre><code class="language-yaml">apiVersion: v1
+baseDomain: labfun.org
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform:
+    aws:
+      type: m6i.xlarge
+  replicas: 1
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform:
+    aws:
+      type: m6i.2xlarge
+  replicas: 1
+metadata:
+  name: studentN
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: 10.0.0.0/16
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: us-west-1
+publish: External
+pullSecret: '&lt;provided&gt;'
+sshKey: 'YOURSSHKEY'
+</code></pre>
+<h3 id="field-by-field-explanation">Field-by-Field Explanation</h3>
+<p><strong><code>baseDomain: labfun.org</code></strong></p>
+<p>This is the DNS domain under which the cluster will be created. The installer creates a subdomain for your cluster — for example, if your cluster name is <code>trainer</code>, the API endpoint will be <code>api.trainer.labfun.org</code> and applications will be accessible at <code>*.apps.trainer.labfun.org</code>. A Route 53 hosted zone for this domain must already exist in the AWS account.</p>
+<p><strong><code>compute</code> (Worker Nodes)</strong></p>
+<pre><code class="language-yaml">compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform:
+    aws:
+      type: m6i.xlarge
+  replicas: 1
+</code></pre>
+<ul>
+<li><strong><code>architecture: amd64</code></strong> — Use standard x86_64 processors. ARM-based nodes (<code>aarch64</code>) are also supported.</li>
+<li><strong><code>hyperthreading: Enabled</code></strong> — Allow each physical CPU core to run two threads. This effectively doubles the available vCPUs and is the default for most production workloads.</li>
+<li><strong><code>type: m6i.xlarge</code></strong> — The AWS EC2 instance type. An <code>m6i.xlarge</code> provides 4 vCPUs and 16 GiB of RAM — enough for a lab worker node. In production, you would choose a larger instance type based on workload requirements.</li>
+<li><strong><code>replicas: 1</code></strong> — The number of worker nodes. For this lab, a single worker is sufficient. Production clusters typically run 3 or more workers for high availability.</li>
+</ul>
+<p>Worker nodes run your application workloads. The control plane schedules Pods onto workers based on resource availability.</p>
+<p><strong><code>controlPlane</code> (Master Nodes)</strong></p>
+<pre><code class="language-yaml">controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform:
+    aws:
+      type: m6i.2xlarge
+  replicas: 1
+</code></pre>
+<ul>
+<li><strong><code>type: m6i.2xlarge</code></strong> — 8 vCPUs and 32 GiB of RAM. The control plane runs the Kubernetes API server, etcd (the cluster database), the scheduler, and the controller manager. These components are memory-intensive, which is why the master gets a larger instance type than the worker.</li>
+<li><strong><code>replicas: 1</code></strong> — A single control plane node. Production clusters use 3 master nodes so that etcd can maintain quorum if one node fails. For a lab, 1 is sufficient.</li>
+</ul>
+<p><strong><code>metadata</code></strong></p>
+<pre><code class="language-yaml">metadata:
+  name: studentN
+</code></pre>
+<p>The cluster name. This becomes part of every DNS record and AWS resource tag. Replace <code>studentN</code> with the name assigned by the instructor (e.g., <code>student1</code>, <code>student2</code>). The cluster name must be lowercase and may contain hyphens. Keep it short — the installer combines it with a random suffix to name AWS resources, and some AWS resource types have character limits.</p>
+<p><strong><code>networking</code></strong></p>
+<pre><code class="language-yaml">networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: 10.0.0.0/16
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+</code></pre>
+<p>OpenShift uses three separate network ranges, and understanding why they are separate is important:</p>
+<ul>
+<li><strong><code>clusterNetwork</code> (10.128.0.0/14)</strong> — The IP range used for Pod networking. Every Pod in the cluster gets an IP from this range. The <code>hostPrefix: 23</code> means each node gets a <code>/23</code> subnet (512 addresses), which limits how many Pods can run on a single node.</li>
+<li><strong><code>serviceNetwork</code> (172.30.0.0/16)</strong> — The IP range for Kubernetes Services. When you create a Service, it gets a virtual IP (ClusterIP) from this range. These IPs are internal to the cluster.</li>
+<li><strong><code>machineNetwork</code> (10.0.0.0/16)</strong> — The IP range for the actual AWS VPC. This is the "real" network that the EC2 instances are connected to.</li>
+</ul>
+<p>These three ranges must <strong>not overlap</strong> with each other or with your existing corporate networks. The defaults are safe for most environments.</p>
+<ul>
+<li><strong><code>networkType: OVNKubernetes</code></strong> — The Container Network Interface (CNI) plugin. OVN-Kubernetes is the default for OpenShift 4.x and provides advanced features like network policy enforcement, egress IP management, and hardware offloading.</li>
+</ul>
+<p><strong><code>platform</code></strong></p>
+<pre><code class="language-yaml">platform:
+  aws:
+    region: us-west-1
+</code></pre>
+<p>Specifies the cloud provider and region. The installer creates all infrastructure in this region.</p>
+<p><strong><code>publish: External</code></strong></p>
+<p>Makes the cluster's API and application endpoints publicly accessible via the internet. The alternative, <code>Internal</code>, restricts access to within the VPC — useful for private clusters that are only reachable through a VPN or Direct Connect.</p>
+<p><strong><code>pullSecret</code></strong></p>
+<p>JSON credentials that grant the cluster permission to pull container images from Red Hat's registries. This is already provided in the configuration file — you do not need to obtain your own.</p>
+<p><strong><code>sshKey</code></strong></p>
+<p>The public key from the key pair you generated earlier. Embedded into every node for emergency SSH access.</p>
+<h2 id="prepare-the-installation">Prepare the Installation</h2>
+<p>Now that you understand what every field does, let's prepare the configuration file and run the installer.</p>
+<h3 id="create-a-clean-installation-directory">Create a Clean Installation Directory</h3>
+<p>The installer writes all generated assets (Kubernetes manifests, Ignition configs, credentials) into a directory you specify. It is critical that this directory starts clean — leftover files from a previous attempt will cause problems. In the VS Code integrated terminal, run:</p>
+<pre><code class="language-bash">rm -rf ~/ocp-install &amp;&amp; mkdir -p ~/ocp-install
+</code></pre>
+<p>If this is your first time, there is nothing to remove, but this command is safe to run regardless.</p>
+<h3 id="get-the-configuration-file-onto-the-bastion">Get the Configuration File onto the Bastion</h3>
+<p>The <code>install-config.yaml</code> file is included in this lab's GitHub repository. Download it directly to the bastion using the terminal:</p>
+<pre><code class="language-bash">wget -q -O ~/ocp-install/install-config.yaml https://raw.githubusercontent.com/jruels/openshift-administration/main/labs/openshift-install-updated/install-config.yaml
+</code></pre>
+<p>Verify the file was downloaded:</p>
+<pre><code class="language-bash">ls ~/ocp-install/install-config.yaml
+</code></pre>
+<p>You should see the file path printed back. If you get "No such file or directory", re-run the <code>wget</code> command above.</p>
+<h3 id="edit-the-configuration-file">Edit the Configuration File</h3>
+<p>The configuration file has two placeholders that need to be replaced: the cluster name and the SSH public key. Run the following commands in the terminal, replacing <code>studentN</code> with your assigned cluster name (e.g., <code>student1</code>, <code>student2</code>):</p>
+<pre><code class="language-bash">sed -i &quot;s/studentN/YOUR_STUDENT_NUMBER/&quot; ~/ocp-install/install-config.yaml
+</code></pre>
+<p>For example, if you are student 3:</p>
+<pre><code class="language-bash">sed -i &quot;s/studentN/student3/&quot; ~/ocp-install/install-config.yaml
+</code></pre>
+<p>Next, inject your SSH public key (generated in the earlier step) into the configuration file:</p>
+<pre><code class="language-bash">sed -i &quot;s|YOURSSHKEY|$(cat ~/.ssh/ocp4-aws-key.pub)|&quot; ~/ocp-install/install-config.yaml
+</code></pre>
+<p>The pull secret is already included in the configuration file — you do not need to obtain one from the Red Hat Hybrid Cloud Console.</p>
+<p>Verify your changes by opening the file in VS Code:</p>
+<pre><code class="language-bash">code ~/ocp-install/install-config.yaml
+</code></pre>
+<p>Confirm that <code>metadata.name</code> shows your assigned cluster name and that <code>sshKey</code> contains your public key (a long string starting with <code>ssh-ed25519</code>).</p>
+<h3 id="back-up-the-configuration">Back Up the Configuration</h3>
+<p>This is a critical step that is easy to forget. The installer <strong>consumes</strong> (deletes) the <code>install-config.yaml</code> file when it runs. If the installation fails and you need to start over, you will need the original file. Always make a backup:</p>
+<pre><code class="language-bash">cp ~/ocp-install/install-config.yaml ~/install-config-backup.yaml
+</code></pre>
+<h2 id="customize-the-ingress-load-balancer">Customize the Ingress Load Balancer</h2>
+<p>Before running the installer, you will customize one infrastructure setting: the type of load balancer used for application traffic (Routes). By default, OpenShift creates a Classic Load Balancer for the ingress router. You will change this to a <strong>Network Load Balancer (NLB)</strong>, which offers better performance, supports static IPs, and avoids the lower Classic LB quota in AWS.</p>
+<p>To customize infrastructure settings, you first generate the installation manifests, modify them, and then run the installer. This is a common pattern in production environments where defaults need to be tuned.</p>
+<h3 id="generate-manifests">Generate Manifests</h3>
+<p>This command reads your <code>install-config.yaml</code> and generates all the Kubernetes manifests the installer will use. Note that it <strong>consumes</strong> the <code>install-config.yaml</code> file (this is why you made a backup earlier):</p>
+<pre><code class="language-bash">openshift-install create manifests --dir=$HOME/ocp-install
+</code></pre>
+<p>You will see output listing the generated manifest files. The directory now contains <code>manifests/</code> and <code>openshift/</code> subdirectories with YAML files for every cluster component.</p>
+<h3 id="configure-nlb-for-the-ingress-controller">Configure NLB for the Ingress Controller</h3>
+<p>Open the ingress configuration manifest in VS Code:</p>
+<pre><code class="language-bash">code ~/ocp-install/manifests/cluster-ingress-02-config.yml
+</code></pre>
+<p>You will see a section that specifies the load balancer type as <code>Classic</code>:</p>
+<pre><code class="language-yaml">  loadBalancer:
+    platform:
+      aws:
+        type: Classic
+      type: AWS
+</code></pre>
+<p>Change <code>Classic</code> to <code>NLB</code>:</p>
+<pre><code class="language-yaml">  loadBalancer:
+    platform:
+      aws:
+        type: NLB
+      type: AWS
+</code></pre>
+<p>Save the file. This tells the ingress operator to create a Network Load Balancer instead of a Classic Load Balancer for the default router.</p>
+<h2 id="run-the-installation">Run the Installation</h2>
+<p>Now start the installer. Since the manifests already exist, the installer will use them directly:</p>
+<pre><code class="language-bash">openshift-install create cluster --dir=$HOME/ocp-install --log-level=info
+</code></pre>
+<ul>
+<li><strong><code>--log-level=info</code></strong> — Show informational messages. You can use <code>debug</code> for more verbose output if you need to troubleshoot.</li>
+</ul>
+<p><strong>Important:</strong> Do not close VS Code or the terminal tab while the installer is running. If the connection drops, the installer process will continue on the bastion host, but you will not see its output. If this happens, reconnect to the bastion and check the log file at <code>~/ocp-install/.openshift_install.log</code>.</p>
+<h3 id="what-happens-during-installation">What Happens During Installation</h3>
+<p>The installation takes approximately 30-45 minutes. Here is what the installer does at each stage:</p>
+<p><strong>Stage 1: Infrastructure Creation (~5-10 minutes)</strong></p>
+<p>The installer calls the AWS API to create:
+- A VPC with public and private subnets
+- Internet gateway and NAT gateways
+- Security groups for master, worker, and load balancer traffic
+- IAM roles and instance profiles for the nodes
+- Network Load Balancers for the API and application ingress (NLB, as configured in the manifest step)
+- Route 53 DNS records pointing to the load balancers
+- A bootstrap EC2 instance and the master EC2 instance</p>
+<p><strong>Stage 2: Bootstrap (~15-20 minutes)</strong></p>
+<p>The bootstrap machine starts first. Its job is to bring up a temporary control plane that the master node uses to configure itself. You will see messages like:</p>
+<pre><code>INFO Waiting up to 20m0s for the Kubernetes API at https://api.&lt;cluster&gt;.&lt;domain&gt;:6443...
+INFO API v1.x.x up
+INFO Waiting up to 45m0s for bootstrapping to complete...
+</code></pre>
+<p>Once the master is self-sufficient, the bootstrap machine is automatically destroyed. This is a key design principle — the bootstrap node is <strong>temporary</strong> and is not part of the final cluster.</p>
+<p><strong>Stage 3: Cluster Initialization (~10-15 minutes)</strong></p>
+<p>The master and worker nodes finish configuring themselves. Cluster Operators (the components that manage DNS, networking, storage, monitoring, the web console, etc.) start up one by one. You will see:</p>
+<pre><code>INFO Waiting up to 40m0s for the cluster to initialize...
+</code></pre>
+<p><strong>Stage 4: Completion</strong></p>
+<p>When all Cluster Operators are healthy, the installer prints the credentials:</p>
+<pre><code>INFO Install complete!
+INFO To access the cluster as the system:admin user when using 'oc', run
+INFO     export KUBECONFIG=/home/ec2-user/ocp-install/auth/kubeconfig
+INFO Access the OpenShift web-console here: https://console-openshift-console.apps.&lt;cluster&gt;.&lt;domain&gt;
+INFO Login to the console with user: &quot;kubeadmin&quot;, and password: &quot;&lt;generated-password&gt;&quot;
+</code></pre>
+<p><strong>Write down the kubeadmin password</strong> — you will need it to log into the web console.</p>
+<h2 id="connect-to-your-cluster">Connect to Your Cluster</h2>
+<h3 id="command-line-access">Command Line Access</h3>
+<p>The installer generates a <code>kubeconfig</code> file containing the credentials needed to authenticate to the cluster API. Export it as an environment variable so that <code>oc</code> knows where to find it. In the VS Code integrated terminal, run:</p>
+<pre><code class="language-bash">export KUBECONFIG=$HOME/ocp-install/auth/kubeconfig
+</code></pre>
+<p>To make this permanent so it persists across terminal sessions:</p>
+<pre><code class="language-bash">echo 'export KUBECONFIG=$HOME/ocp-install/auth/kubeconfig' &gt;&gt; ~/.bashrc
+source ~/.bashrc
+</code></pre>
+<p>Verify you can reach the cluster:</p>
+<pre><code class="language-bash">oc get nodes
+</code></pre>
+<p>You should see your master and worker nodes in <code>Ready</code> status:</p>
+<pre><code>NAME                                        STATUS   ROLES                  AGE   VERSION
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    control-plane,master   10m   v1.x.x
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 5m    v1.x.x
+</code></pre>
+<p>Check that all Cluster Operators are healthy:</p>
+<pre><code class="language-bash">oc get clusteroperators
+</code></pre>
+<p>Every operator should show <code>AVAILABLE: True</code>, <code>PROGRESSING: False</code>, and <code>DEGRADED: False</code>. If any operator is still progressing, wait a few minutes and check again — some operators take a few minutes to fully stabilize after the installer reports completion.</p>
+<p>Verify the cluster version:</p>
+<pre><code class="language-bash">oc get clusterversion
+</code></pre>
+<h3 id="web-console-access">Web Console Access</h3>
+<p>Open a browser and navigate to the console URL printed by the installer:</p>
+<pre><code>https://console-openshift-console.apps.&lt;cluster&gt;.&lt;domain&gt;
+</code></pre>
+<p>Log in with:
+- <strong>Username:</strong> <code>kubeadmin</code>
+- <strong>Password:</strong> The password printed at the end of the installation</p>
+<p>The web console provides a graphical interface for managing your cluster. You can view workloads, monitor resource usage, manage users, and much more. For this course, we will primarily use the <code>oc</code> command line in VS Code's integrated terminal, but the web console is useful for visualization and quick exploration.</p>
+<h3 id="alternative-token-based-login">Alternative: Token-Based Login</h3>
+<p>You can also obtain a login token from the web console, which is useful if you want to authenticate <code>oc</code> on a different machine:</p>
+<ol>
+<li>In the web console, click your username (<strong>kube:admin</strong>) in the upper-right corner.</li>
+<li>Select <strong>Copy login command</strong>.</li>
+<li>Click <strong>Display Token</strong>.</li>
+<li>Copy the <code>oc login</code> command and paste it into your VS Code terminal.</li>
+</ol>
+<h2 id="congratulations">Congratulations</h2>
+<p>You now have a running OpenShift cluster on AWS. You understand:</p>
+<ul>
+<li><strong>Why</strong> the installer needs DNS, IAM, and a pull secret before it can start</li>
+<li><strong>What</strong> each field in <code>install-config.yaml</code> controls and how the three network ranges are used</li>
+<li><strong>How</strong> the installer progresses through infrastructure creation, bootstrap, and cluster initialization</li>
+<li><strong>How</strong> to connect to the cluster using both the <code>oc</code> command line and the web console</li>
+</ul>
+<p>For the remaining labs, keep your VS Code session connected to the bastion host. You will use the integrated terminal for <code>oc</code> commands and the editor for viewing and creating YAML manifests.</p>
+<hr />
+<h2 id="reference-prerequisite-setup-instructor-use">Reference: Prerequisite Setup (Instructor Use)</h2>
+<p>The steps below document how the prerequisites for this lab were created. Students do not need to perform these steps — they are included for completeness and for instructors setting up new training environments.</p>
+<h3 id="register-a-dns-domain-in-route-53">Register a DNS Domain in Route 53</h3>
+<p>OpenShift requires a DNS domain. Route 53 is the simplest option when running on AWS because the installer can automatically create DNS records in the hosted zone.</p>
+<ol>
+<li>In the AWS Console, navigate to <strong>Route 53 &gt; Registered domains</strong>.</li>
+<li>Click <strong>Register domains</strong>, search for your desired domain, and purchase it.</li>
+<li>Route 53 automatically creates a hosted zone for the new domain.</li>
+<li>Verify the hosted zone exists under <strong>Route 53 &gt; Hosted zones</strong>.</li>
+</ol>
+<h3 id="create-an-iam-user">Create an IAM User</h3>
+<p>The installer needs an IAM user with permissions to create VPCs, EC2 instances, load balancers, Route 53 records, IAM roles, and S3 buckets.</p>
+<ol>
+<li>In the AWS Console, navigate to <strong>IAM &gt; Users &gt; Create user</strong>.</li>
+<li>Create a group named <code>admin</code> with the <code>AdministratorAccess</code> policy.</li>
+<li>Add the user to the <code>admin</code> group.</li>
+<li>Under the user's <strong>Security credentials</strong> tab, create an access key for <strong>CLI</strong> use.</li>
+<li>Save both the <strong>Access Key ID</strong> and <strong>Secret Access Key</strong> — the secret is only shown once.</li>
+</ol>
+<h3 id="increase-aws-service-quotas">Increase AWS Service Quotas</h3>
+<p>When running many clusters simultaneously (e.g., 45 student clusters), several AWS default quotas are too low. Request increases <strong>before</strong> the class begins — some increases are auto-approved, others may take hours.</p>
+<table>
+<thead>
+<tr>
+<th>Quota</th>
+<th>Service Code</th>
+<th>Default</th>
+<th>Recommended</th>
+<th>Quota Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gateway VPC Endpoints per Region</td>
+<td>vpc</td>
+<td>20</td>
+<td>60</td>
+<td>L-1B52E74A</td>
+</tr>
+<tr>
+<td>Network Load Balancers per Region</td>
+<td>elasticloadbalancing</td>
+<td>100</td>
+<td>150</td>
+<td>L-69A177A2</td>
+</tr>
+</tbody>
+</table>
+<p>Each OpenShift cluster creates 1 Gateway VPC Endpoint and 3 Network Load Balancers (2 for the API + 1 for the ingress router when using NLB mode). For 45 clusters plus an instructor cluster, that requires 46 VPC endpoints and 138 NLBs.</p>
+<p>Request increases using the AWS CLI:</p>
+<pre><code class="language-bash">aws service-quotas request-service-quota-increase --service-code vpc --quota-code L-1B52E74A --desired-value 60
+aws service-quotas request-service-quota-increase --service-code elasticloadbalancing --quota-code L-69A177A2 --desired-value 150
+</code></pre>
+<p>The lab instructs students to configure NLB for the ingress router (instead of the default Classic Load Balancer). This is essential — the Classic LB default quota is only 20 per region, which would be exhausted before half the class finishes installing.</p>
+<h3 id="launch-a-bastion-host">Launch a Bastion Host</h3>
+<p>The bastion host is where the installer runs. It needs outbound internet access to reach the AWS API and Red Hat registries.</p>
+<ol>
+<li>Navigate to <strong>EC2 &gt; Launch instance</strong>.</li>
+<li>Configure:
+   - <strong>AMI:</strong> Amazon Linux 2023
+   - <strong>Instance type:</strong> <code>c5.2xlarge</code> (or smaller — the installer is not resource-intensive)
+   - <strong>Key pair:</strong> Create a new RSA key pair and download the <code>.pem</code> file
+   - <strong>Network:</strong> Default VPC, auto-assign public IP enabled
+   - <strong>Security group:</strong> Allow SSH (port 22) inbound
+   - <strong>Storage:</strong> 50 GiB gp3 (the installer downloads several GB of data)</li>
+<li>Launch the instance and note its public IP address.</li>
+</ol>
+</body>
+</html>

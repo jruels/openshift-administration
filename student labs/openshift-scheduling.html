@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheduling in OpenShift</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="scheduling-in-openshift">Scheduling in OpenShift</h1>
+<p>In this lab, you will learn how the Kubernetes scheduler decides where to place Pods and how to influence those decisions. You will work with four scheduling mechanisms:</p>
+<ol>
+<li><strong>Node Selectors</strong> — The simplest way to constrain Pods to specific nodes</li>
+<li><strong>Node Affinity</strong> — A more expressive version of node selectors with required and preferred rules</li>
+<li><strong>Taints and Tolerations</strong> — Allow nodes to repel Pods unless they explicitly opt in</li>
+<li><strong>Pod Affinity and Anti-Affinity</strong> — Place Pods relative to other Pods, not just nodes</li>
+</ol>
+<p>Understanding these tools is essential for production clusters where you need to control workload placement for performance, isolation, compliance, or hardware requirements.</p>
+<h2 id="cluster-topology">Cluster Topology</h2>
+<p>Before making scheduling decisions, you need to know what you are working with. List the nodes in your cluster:</p>
+<pre><code class="language-bash">oc get nodes
+</code></pre>
+<p>You should see two nodes — a worker and a control-plane/master:</p>
+<pre><code>NAME                                        STATUS   ROLES                  AGE   VERSION
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 ...   v1.34.2
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    control-plane,master   ...   v1.34.2
+</code></pre>
+<p>Check for taints, which restrict what can be scheduled on a node:</p>
+<pre><code class="language-bash">oc describe nodes | grep -A1 &quot;Taints:&quot;
+</code></pre>
+<p>The master node has a <code>node-role.kubernetes.io/master:NoSchedule</code> taint, which means regular workloads cannot run on it. Only the worker node is available for your Pods. This is the default in OpenShift — control-plane nodes are reserved for cluster infrastructure.</p>
+<h2 id="project-setup">Project Setup</h2>
+<p>Create a dedicated project for this lab:</p>
+<pre><code class="language-bash">oc new-project scheduling-lab
+</code></pre>
+<p>Grant the <code>anyuid</code> SCC so that nginx containers can run:</p>
+<pre><code class="language-bash">oc adm policy add-scc-to-user anyuid -z default -n scheduling-lab
+</code></pre>
+<h2 id="part-1-node-selectors">Part 1: Node Selectors</h2>
+<p>A <code>nodeSelector</code> is the simplest way to constrain Pods to nodes with specific labels. The scheduler will only place the Pod on nodes whose labels match every key-value pair in the selector.</p>
+<h3 id="label-a-node">Label a node</h3>
+<p>First, identify your worker node name:</p>
+<pre><code class="language-bash">WORKER_NODE=$(oc get nodes -l node-role.kubernetes.io/worker -o jsonpath='{.items[0].metadata.name}')
+echo $WORKER_NODE
+</code></pre>
+<p>Add a custom label to simulate a node with SSD storage:</p>
+<pre><code class="language-bash">oc label nodes $WORKER_NODE disktype=ssd
+</code></pre>
+<p>Verify the label was applied:</p>
+<pre><code class="language-bash">oc get nodes -l disktype=ssd
+</code></pre>
+<p>You should see your worker node listed.</p>
+<h3 id="deploy-a-pod-with-nodeselector">Deploy a Pod with nodeSelector</h3>
+<p>Create a file called <code>ssd-pod.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: ssd-pod
+  labels:
+    app: ssd-test
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    ports:
+    - containerPort: 80
+  nodeSelector:
+    disktype: ssd
+</code></pre>
+<p>The <code>nodeSelector</code> tells the scheduler: only place this Pod on nodes that have the label <code>disktype=ssd</code>.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f ssd-pod.yaml
+</code></pre>
+<p>Verify the Pod was scheduled to the labeled node:</p>
+<pre><code class="language-bash">oc get pod ssd-pod -o wide
+</code></pre>
+<p>The <code>NODE</code> column should show your worker node — the only node with the <code>disktype=ssd</code> label.</p>
+<h3 id="clean-up">Clean up</h3>
+<pre><code class="language-bash">oc delete pod ssd-pod
+oc label nodes $WORKER_NODE disktype-
+</code></pre>
+<p>The trailing <code>-</code> after <code>disktype</code> removes the label.</p>
+<h2 id="part-2-node-affinity">Part 2: Node Affinity</h2>
+<p>Node affinity is a more expressive version of <code>nodeSelector</code>. It supports two rule types:</p>
+<ul>
+<li><strong>requiredDuringSchedulingIgnoredDuringExecution</strong> — Hard requirement. The Pod will not schedule unless a matching node exists. It stays <code>Pending</code> indefinitely until one becomes available.</li>
+<li><strong>preferredDuringSchedulingIgnoredDuringExecution</strong> — Soft preference. The scheduler tries to find a matching node but will schedule the Pod elsewhere if no match exists.</li>
+</ul>
+<p>The "IgnoredDuringExecution" part means that if a node's labels change after a Pod is already running, the Pod is not evicted.</p>
+<h3 id="required-node-affinity">Required node affinity</h3>
+<p>Create a file called <code>affinity-required.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: affinity-required
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: affinity-required
+  template:
+    metadata:
+      labels:
+        app: affinity-required
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: env
+                operator: In
+                values:
+                - production
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>This Deployment requires nodes with the label <code>env=production</code>. The <code>operator: In</code> means the node's <code>env</code> label must have a value that is in the list <code>[production]</code>. Other operators include <code>NotIn</code>, <code>Exists</code>, <code>DoesNotExist</code>, <code>Gt</code>, and <code>Lt</code>.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f affinity-required.yaml
+</code></pre>
+<p>Check the Pods:</p>
+<pre><code class="language-bash">oc get pods -l app=affinity-required
+</code></pre>
+<pre><code>NAME                                 READY   STATUS    RESTARTS   AGE
+affinity-required-85dd58687d-xxxxx   0/1     Pending   0          5s
+affinity-required-85dd58687d-yyyyy   0/1     Pending   0          5s
+</code></pre>
+<p>Both Pods are <code>Pending</code> because no node has the label <code>env=production</code>. Investigate with <code>oc describe</code>:</p>
+<pre><code class="language-bash">oc describe pod -l app=affinity-required | grep -A3 &quot;Events:&quot;
+</code></pre>
+<p>You will see a <code>FailedScheduling</code> event explaining that no nodes match the Pod's node affinity.</p>
+<h3 id="fix-the-scheduling-issue">Fix the scheduling issue</h3>
+<p>Add the required label to the worker node:</p>
+<pre><code class="language-bash">oc label nodes $WORKER_NODE env=production
+</code></pre>
+<p>Within seconds, the scheduler detects the matching node and places the Pods:</p>
+<pre><code class="language-bash">oc get pods -l app=affinity-required -o wide
+</code></pre>
+<p>Both Pods should now be <code>Running</code> on the worker node.</p>
+<h3 id="preferred-node-affinity">Preferred node affinity</h3>
+<p>Create a file called <code>affinity-preferred.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: affinity-preferred
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: affinity-preferred
+  template:
+    metadata:
+      labels:
+        app: affinity-preferred
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+              - key: gpu
+                operator: In
+                values:
+                - &quot;true&quot;
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>This Deployment prefers nodes with <code>gpu=true</code> (weight 80 out of 100), but no node in the cluster has that label.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f affinity-preferred.yaml
+</code></pre>
+<p>Check the Pods:</p>
+<pre><code class="language-bash">oc get pods -l app=affinity-preferred -o wide
+</code></pre>
+<p>Both Pods are <code>Running</code> — even though no node has the <code>gpu=true</code> label. This is the key difference between <code>required</code> and <code>preferred</code>: preferred rules are best-effort, not mandatory. The scheduler places the Pods on the best available node.</p>
+<h3 id="clean-up_1">Clean up</h3>
+<pre><code class="language-bash">oc delete deployment affinity-required affinity-preferred
+oc label nodes $WORKER_NODE env-
+</code></pre>
+<h2 id="part-3-taints-and-tolerations">Part 3: Taints and Tolerations</h2>
+<p>Taints and tolerations work together to control scheduling from the <strong>node's</strong> perspective. A taint on a node says "do not schedule here unless you tolerate me." A toleration on a Pod says "I can handle that taint."</p>
+<p>This is the opposite of affinity: affinity attracts Pods to nodes, while taints repel Pods from nodes.</p>
+<p>Each taint has three components:
+- <strong>key</strong> — A label-like identifier (e.g., <code>dedicated</code>)
+- <strong>value</strong> — An optional value (e.g., <code>special</code>)
+- <strong>effect</strong> — What happens to Pods that do not tolerate the taint:
+  - <code>NoSchedule</code> — New Pods will not be scheduled (existing Pods remain)
+  - <code>PreferNoSchedule</code> — The scheduler tries to avoid the node but may still place Pods there
+  - <code>NoExecute</code> — New Pods are rejected AND existing Pods without a matching toleration are evicted</p>
+<p>Your cluster already demonstrates taints — the master node has <code>node-role.kubernetes.io/master:NoSchedule</code>, which is why your workloads only run on the worker.</p>
+<h3 id="taint-the-worker-node">Taint the worker node</h3>
+<p>Apply a custom taint to the worker node:</p>
+<pre><code class="language-bash">oc adm taint nodes $WORKER_NODE dedicated=special:NoSchedule
+</code></pre>
+<p><strong>Note:</strong> OpenShift uses <code>oc adm taint</code> instead of <code>kubectl taint</code>.</p>
+<p>Verify the taint:</p>
+<pre><code class="language-bash">oc describe node $WORKER_NODE | grep Taints
+</code></pre>
+<pre><code>Taints:             dedicated=special:NoSchedule
+</code></pre>
+<p>Now both nodes have taints — the master with its built-in taint and the worker with your custom one. No regular Pod can schedule anywhere.</p>
+<h3 id="deploy-without-a-toleration">Deploy without a toleration</h3>
+<p>Create a file called <code>no-toleration.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-toleration
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: no-toleration
+  template:
+    metadata:
+      labels:
+        app: no-toleration
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f no-toleration.yaml
+</code></pre>
+<p>Check the Pods:</p>
+<pre><code class="language-bash">oc get pods -l app=no-toleration
+</code></pre>
+<pre><code>NAME                             READY   STATUS    RESTARTS   AGE
+no-toleration-64c84d75cd-xxxxx   0/1     Pending   0          5s
+no-toleration-64c84d75cd-yyyyy   0/1     Pending   0          5s
+</code></pre>
+<p>Both Pods are <code>Pending</code>. Inspect the scheduling failure:</p>
+<pre><code class="language-bash">oc describe pod -l app=no-toleration | grep -A2 &quot;Warning&quot;
+</code></pre>
+<p>The event message says <code>2 node(s) had untolerated taint(s)</code> — neither node will accept these Pods.</p>
+<h3 id="deploy-with-a-toleration">Deploy with a toleration</h3>
+<p>Create a file called <code>with-toleration.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: with-toleration
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: with-toleration
+  template:
+    metadata:
+      labels:
+        app: with-toleration
+    spec:
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: special
+        effect: NoSchedule
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>The <code>tolerations</code> section says: "This Pod can tolerate nodes with the taint <code>dedicated=special:NoSchedule</code>." The toleration must match the taint's key, value, and effect exactly.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f with-toleration.yaml
+</code></pre>
+<p>Check both Deployments side by side:</p>
+<pre><code class="language-bash">oc get pods -o wide
+</code></pre>
+<p>You should see the <code>with-toleration</code> Pods running on the worker node, while the <code>no-toleration</code> Pods remain <code>Pending</code>:</p>
+<pre><code>NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE
+no-toleration-64c84d75cd-xxxxx     0/1     Pending   0          30s   &lt;none&gt;        &lt;none&gt;
+no-toleration-64c84d75cd-yyyyy     0/1     Pending   0          30s   &lt;none&gt;        &lt;none&gt;
+with-toleration-6bb8b9fd94-xxxxx   1/1     Running   0          10s   10.129.0.91   ip-10-0-xx-xx...
+with-toleration-6bb8b9fd94-yyyyy   1/1     Running   0          10s   10.129.0.92   ip-10-0-xx-xx...
+</code></pre>
+<p>The toleration acts as a key that unlocks the tainted node. Without it, Pods are locked out.</p>
+<h3 id="clean-up_2">Clean up</h3>
+<p>Remove the custom taint from the worker and delete the Deployments:</p>
+<pre><code class="language-bash">oc adm taint nodes $WORKER_NODE dedicated-
+oc delete deployment no-toleration with-toleration
+</code></pre>
+<p>The trailing <code>-</code> after <code>dedicated</code> removes the taint. Verify:</p>
+<pre><code class="language-bash">oc describe node $WORKER_NODE | grep Taints
+</code></pre>
+<pre><code>Taints:             &lt;none&gt;
+</code></pre>
+<h2 id="part-4-pod-affinity-and-anti-affinity">Part 4: Pod Affinity and Anti-Affinity</h2>
+<p>Pod affinity and anti-affinity let you place Pods relative to <strong>other Pods</strong> rather than nodes. This is useful when:</p>
+<ul>
+<li><strong>Pod affinity</strong> — You want related services on the same node for lower latency (e.g., a web server and its cache)</li>
+<li><strong>Pod anti-affinity</strong> — You want replicas spread across nodes for high availability (e.g., database replicas on separate nodes)</li>
+</ul>
+<p>Like node affinity, pod affinity supports both <code>required</code> and <code>preferred</code> variants.</p>
+<h3 id="pod-affinity-co-locate-related-services">Pod affinity: co-locate related services</h3>
+<p>Deploy a cache and a web server that must run on the same node:</p>
+<p>Create a file called <code>pod-affinity.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - cache
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>The <code>web</code> Deployment has a <code>podAffinity</code> rule: it <strong>requires</strong> that web Pods run on the same <code>kubernetes.io/hostname</code> (same node) as Pods with label <code>app=cache</code>. The <code>topologyKey</code> defines what "same location" means — <code>kubernetes.io/hostname</code> means the same node, while <code>topology.kubernetes.io/zone</code> would mean the same availability zone.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f pod-affinity.yaml
+</code></pre>
+<p>Verify the Pods are co-located:</p>
+<pre><code class="language-bash">oc get pods -o wide
+</code></pre>
+<p>All three Pods (1 cache + 2 web) should be on the same node. In this cluster with one schedulable worker, this is the only option, but in a larger cluster the scheduler would place web Pods on whichever node the cache Pod happens to land on.</p>
+<h3 id="pod-anti-affinity-require-separation">Pod anti-affinity: require separation</h3>
+<p>Anti-affinity is the opposite — it prevents Pods from being co-located. This is how you ensure replicas are spread across nodes for high availability.</p>
+<p>Create a file called <code>pod-anti-affinity.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-colocate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: no-colocate
+  template:
+    metadata:
+      labels:
+        app: no-colocate
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - no-colocate
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>This rule says: no two Pods with label <code>app=no-colocate</code> may run on the same node. With 2 replicas but only 1 schedulable node, one Pod will be stuck.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f pod-anti-affinity.yaml
+</code></pre>
+<p>Check the Pods:</p>
+<pre><code class="language-bash">oc get pods -l app=no-colocate -o wide
+</code></pre>
+<pre><code>NAME                          READY   STATUS    RESTARTS   AGE   IP            NODE
+no-colocate-79f7cfdcb-xxxxx   0/1     Pending   0          8s    &lt;none&gt;        &lt;none&gt;
+no-colocate-79f7cfdcb-yyyyy   1/1     Running   0          8s    10.129.0.96   ip-10-0-xx-xx...
+</code></pre>
+<p>One Pod is <code>Running</code> and one is <code>Pending</code>. The first Pod scheduled on the worker, but the second cannot go there (anti-affinity) and the master is tainted, so it has nowhere to go.</p>
+<p>This demonstrates an important production lesson: <strong>required anti-affinity with more replicas than available nodes will leave Pods unschedulable.</strong> In production clusters with many nodes this is not a problem, but it is something to plan for.</p>
+<h3 id="pod-anti-affinity-prefer-separation">Pod anti-affinity: prefer separation</h3>
+<p>The safe alternative is <code>preferred</code> anti-affinity, which tries to spread Pods but allows co-location when necessary:</p>
+<p>Create a file called <code>pod-anti-affinity-preferred.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prefer-spread
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prefer-spread
+  template:
+    metadata:
+      labels:
+        app: prefer-spread
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - prefer-spread
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f pod-anti-affinity-preferred.yaml
+</code></pre>
+<p>Check the Pods:</p>
+<pre><code class="language-bash">oc get pods -l app=prefer-spread -o wide
+</code></pre>
+<p>Both Pods are <code>Running</code> on the same node. The scheduler tried to separate them (weight 100 is the maximum preference), but since there is only one schedulable node, it placed them together anyway. In a cluster with multiple nodes, the scheduler would spread them across different nodes.</p>
+<p>This is the recommended approach for most production workloads — <code>preferred</code> anti-affinity provides the best possible spreading without risking unschedulable Pods.</p>
+<h3 id="clean-up_3">Clean up</h3>
+<pre><code class="language-bash">oc delete deployment cache web no-colocate prefer-spread
+</code></pre>
+<h2 id="cleanup">Cleanup</h2>
+<p>Remove all custom labels from nodes and delete the project:</p>
+<pre><code class="language-bash">oc label nodes $WORKER_NODE disktype- env- 2&gt;/dev/null
+oc delete project scheduling-lab
+</code></pre>
+<h2 id="congratulations">Congratulations</h2>
+<p>You have learned four scheduling mechanisms that control where Pods run in OpenShift:</p>
+<ul>
+<li><strong>Node Selectors</strong> are the simplest constraint — Pods only run on nodes with exact label matches.</li>
+<li><strong>Node Affinity</strong> adds expressiveness with <code>required</code> (hard) and <code>preferred</code> (soft) rules, plus operators like <code>In</code>, <code>NotIn</code>, and <code>Exists</code>.</li>
+<li><strong>Taints and Tolerations</strong> work from the node's perspective — taints repel all Pods except those with matching tolerations. OpenShift uses this to protect control-plane nodes.</li>
+<li><strong>Pod Affinity</strong> co-locates related Pods (e.g., web + cache on the same node), while <strong>Pod Anti-Affinity</strong> separates them for high availability.</li>
+</ul>
+<p>The key design decision in production is choosing between <code>required</code> and <code>preferred</code> rules. Required rules guarantee placement constraints but risk leaving Pods unschedulable. Preferred rules are best-effort but ensure your application always runs, even in degraded conditions.</p>
+</body>
+</html>

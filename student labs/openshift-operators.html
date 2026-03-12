@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes Operators</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="kubernetes-operators">Kubernetes Operators</h1>
+<p>In this lab, you will learn what Kubernetes Operators are, how they extend the Kubernetes API using Custom Resource Definitions (CRDs), and how the Operator Lifecycle Manager (OLM) in OpenShift handles installing, upgrading, and managing Operators. By the end, you will have hands-on experience with CRDs, Custom Resources, and installing an Operator from OperatorHub.</p>
+<h2 id="why-operators-exist">Why Operators Exist</h2>
+<p>Kubernetes Deployments, Services, and ReplicaSets handle stateless applications well — they can scale, self-heal, and roll out updates. But many real-world workloads (databases, message queues, monitoring systems) need <strong>operational knowledge</strong>: when to take backups, how to handle failover, how to resize storage, how to upgrade data schemas.</p>
+<p>Operators encode this operational knowledge into software. An Operator is a custom controller that watches for changes to custom resources and takes action — just like the built-in Deployment controller watches Deployments and manages ReplicaSets, an Operator watches its own custom resources and manages the underlying application.</p>
+<p>The <strong>Operator pattern</strong> has three components:
+1. <strong>Custom Resource Definition (CRD)</strong> — Extends the Kubernetes API with a new resource type
+2. <strong>Custom Resource (CR)</strong> — An instance of the CRD that declares the desired state
+3. <strong>Controller</strong> — Software that watches CRs and reconciles actual state to match desired state</p>
+<h2 id="part-1-custom-resource-definitions">Part 1: Custom Resource Definitions</h2>
+<p>Before diving into full Operators, you need to understand CRDs — the mechanism that lets anyone extend the Kubernetes API with new resource types.</p>
+<h3 id="explore-existing-crds">Explore Existing CRDs</h3>
+<p>OpenShift ships with many CRDs already installed. These power features like MachineConfigs, Routes, and the Operator Lifecycle Manager itself.</p>
+<p>See how many CRDs exist on your cluster:</p>
+<pre><code class="language-bash">oc get crd | wc -l
+</code></pre>
+<p>You will see well over 100 CRDs. Each one adds a new resource type to the Kubernetes API.</p>
+<p>Look at some of the built-in CRDs:</p>
+<pre><code class="language-bash">oc get crd | grep -E 'machineconfiguration|clusteroperator|machinesets'
+</code></pre>
+<p>Every OpenShift feature that goes beyond standard Kubernetes (MachineSets, MachineConfigs, ClusterOperators) is implemented as a CRD + controller — the same Operator pattern you are about to learn.</p>
+<h3 id="create-a-custom-resource-definition">Create a Custom Resource Definition</h3>
+<p>Now create your own CRD to understand the mechanics. You will define a new resource type called <code>WebApp</code> that could be used by an Operator to manage web applications.</p>
+<p>Create a file called <code>webapp-crd.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: webapps.training.openshift.io
+spec:
+  group: training.openshift.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              replicas:
+                type: integer
+                minimum: 1
+                maximum: 10
+              image:
+                type: string
+              port:
+                type: integer
+            required:
+            - replicas
+            - image
+          status:
+            type: object
+            properties:
+              availableReplicas:
+                type: integer
+    additionalPrinterColumns:
+    - name: Replicas
+      type: integer
+      jsonPath: .spec.replicas
+    - name: Image
+      type: string
+      jsonPath: .spec.image
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: webapps
+    singular: webapp
+    kind: WebApp
+    shortNames:
+    - wa
+</code></pre>
+<p>Let's understand the key fields:</p>
+<ul>
+<li><strong>group: training.openshift.io</strong> — The API group for this resource. Combined with the version, it forms the <code>apiVersion</code> used in manifests (e.g., <code>training.openshift.io/v1</code>).</li>
+<li><strong>versions</strong> — CRDs support multiple versions for evolution. Each version has its own schema.</li>
+<li><strong>schema.openAPIV3Schema</strong> — Defines the structure and validation rules. The <code>minimum: 1</code> and <code>maximum: 10</code> on replicas means the API server will reject any value outside that range.</li>
+<li><strong>required</strong> — Fields that must be present in every CR.</li>
+<li><strong>additionalPrinterColumns</strong> — Custom columns shown when you run <code>oc get webapps</code>.</li>
+<li><strong>scope: Namespaced</strong> — CRs exist within namespaces (as opposed to <code>Cluster</code> scope).</li>
+<li><strong>shortNames</strong> — Lets you type <code>oc get wa</code> instead of <code>oc get webapps</code>.</li>
+</ul>
+<p>Apply the CRD:</p>
+<pre><code class="language-bash">oc apply -f webapp-crd.yaml
+</code></pre>
+<p>Verify it was created:</p>
+<pre><code class="language-bash">oc get crd webapps.training.openshift.io
+</code></pre>
+<p>The Kubernetes API server now knows about the <code>WebApp</code> resource type. Wait a few seconds for the API server to fully register the new type, then use <code>oc explain</code> to explore it — just like any built-in resource:</p>
+<pre><code class="language-bash">oc explain webapp.spec
+</code></pre>
+<pre><code>GROUP:      training.openshift.io
+KIND:       WebApp
+VERSION:    v1
+
+FIELD: spec &lt;Object&gt;
+
+FIELDS:
+  image     &lt;string&gt; -required-
+  port      &lt;integer&gt;
+  replicas  &lt;integer&gt; -required-
+</code></pre>
+<p>This is the same <code>oc explain</code> you used for Deployments and Services — CRDs are truly first-class citizens in the API.</p>
+<h3 id="create-a-custom-resource">Create a Custom Resource</h3>
+<p>Now create an instance of your CRD — a Custom Resource.</p>
+<p>Create a project for this lab:</p>
+<pre><code class="language-bash">oc new-project operators-lab
+</code></pre>
+<p>Create a file called <code>my-webapp.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: training.openshift.io/v1
+kind: WebApp
+metadata:
+  name: my-webapp
+spec:
+  replicas: 3
+  image: nginx:1.27
+  port: 8080
+</code></pre>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f my-webapp.yaml
+</code></pre>
+<p>List your WebApps:</p>
+<pre><code class="language-bash">oc get webapps
+</code></pre>
+<pre><code>NAME        REPLICAS   IMAGE        AGE
+my-webapp   3          nginx:1.27   5s
+</code></pre>
+<p>Notice the custom columns from <code>additionalPrinterColumns</code> — they show exactly the fields you defined. Try the short name:</p>
+<pre><code class="language-bash">oc get wa
+</code></pre>
+<p>Get the full details:</p>
+<pre><code class="language-bash">oc describe webapp my-webapp
+</code></pre>
+<h3 id="test-api-validation">Test API Validation</h3>
+<p>Try creating a WebApp with an invalid replica count:</p>
+<pre><code class="language-bash">oc apply -f - &lt;&lt;EOF
+apiVersion: training.openshift.io/v1
+kind: WebApp
+metadata:
+  name: invalid-webapp
+spec:
+  replicas: 50
+  image: nginx:1.27
+EOF
+</code></pre>
+<p>The API server rejects this because the schema specifies <code>maximum: 10</code>. This validation happens automatically — no Operator code needed.</p>
+<h3 id="understanding-the-gap">Understanding the Gap</h3>
+<p>You have a CRD and a CR, but nothing actually happens. The <code>my-webapp</code> resource exists in the API, but no Pods are running. That is because there is no <strong>controller</strong> watching for WebApp resources and creating the corresponding Deployments, Services, and Pods.</p>
+<p>This is the gap that Operators fill. A real Operator would:
+1. Watch for WebApp CRs
+2. Create a Deployment with the specified image and replica count
+3. Create a Service on the specified port
+4. Continuously reconcile — if someone deletes a Pod, the Operator ensures it comes back</p>
+<p>Delete the test resources before moving on:</p>
+<pre><code class="language-bash">oc delete webapp my-webapp
+oc delete webapp invalid-webapp 2&gt;/dev/null
+</code></pre>
+<h2 id="part-2-operator-lifecycle-manager-olm">Part 2: Operator Lifecycle Manager (OLM)</h2>
+<p>Writing an Operator from scratch requires significant Go programming. Fortunately, the OpenShift ecosystem provides hundreds of pre-built Operators through <strong>OperatorHub</strong>, and the <strong>Operator Lifecycle Manager (OLM)</strong> handles installing, upgrading, and managing them.</p>
+<h3 id="olm-architecture">OLM Architecture</h3>
+<p>OLM consists of several components that work together:</p>
+<p><strong>CatalogSources</strong> — Define where Operators are available from. OpenShift ships with four default catalogs:</p>
+<pre><code class="language-bash">oc get catalogsource -n openshift-marketplace
+</code></pre>
+<pre><code>NAME                  DISPLAY               TYPE   PUBLISHER   AGE
+certified-operators   Certified Operators   grpc   Red Hat
+community-operators   Community Operators   grpc   Red Hat
+redhat-marketplace    Red Hat Marketplace   grpc   Red Hat
+redhat-operators      Red Hat Operators     grpc   Red Hat
+</code></pre>
+<p>Each catalog contains an index of available Operators from a specific source:
+- <strong>redhat-operators</strong> — Operators built and supported by Red Hat
+- <strong>certified-operators</strong> — Partner Operators certified by Red Hat
+- <strong>community-operators</strong> — Community-maintained Operators
+- <strong>redhat-marketplace</strong> — Commercial Operators from Red Hat Marketplace</p>
+<p><strong>OperatorGroups</strong> — Control which namespaces an Operator can watch. OpenShift creates a default <code>global-operators</code> group in the <code>openshift-operators</code> namespace:</p>
+<pre><code class="language-bash">oc get operatorgroup -n openshift-operators
+</code></pre>
+<p><strong>Subscriptions</strong> — Tell OLM to install a specific Operator from a catalog and keep it updated.</p>
+<p><strong>ClusterServiceVersions (CSVs)</strong> — Describe an Operator's capabilities, required permissions, and owned CRDs. The CSV is the "unit of deployment" in OLM.</p>
+<p><strong>InstallPlans</strong> — The concrete steps OLM takes to install or upgrade an Operator.</p>
+<h3 id="explore-clusteroperators">Explore ClusterOperators</h3>
+<p>Before installing a new Operator, look at the Operators that are already managing your cluster. OpenShift itself is composed of Operators:</p>
+<pre><code class="language-bash">oc get clusteroperators
+</code></pre>
+<p>You will see operators for DNS, ingress, authentication, the image registry, and many more. Each one follows the same pattern: it watches custom resources and reconciles the actual state of its component to match.</p>
+<p>Pick one and examine it:</p>
+<pre><code class="language-bash">oc describe clusteroperator ingress
+</code></pre>
+<p>This shows the ingress Operator's status, conditions, and the versions it has been managing. Every piece of OpenShift infrastructure — from networking to the web console — is managed by an Operator.</p>
+<h3 id="browse-available-operators">Browse Available Operators</h3>
+<p>Use the <code>packagemanifests</code> resource to see what Operators are available for installation. PackageManifests are populated from the CatalogSources:</p>
+<pre><code class="language-bash">oc get packagemanifests -n openshift-marketplace | head -20
+</code></pre>
+<p><strong>Note:</strong> If you see <code>No resources found</code>, the CatalogSources may not be fully synced yet. Check their status:</p>
+<pre><code class="language-bash">oc get catalogsource -n openshift-marketplace -o custom-columns=NAME:.metadata.name,STATE:.status.connectionState.lastObservedState
+</code></pre>
+<p>All catalogs should show <code>READY</code>. If any show <code>TRANSIENT_FAILURE</code>, the cluster's pull secret may need to be updated for registry.redhat.io access.</p>
+<p>To search for a specific Operator:</p>
+<pre><code class="language-bash">oc get packagemanifests -n openshift-marketplace | grep -i web-terminal
+</code></pre>
+<p>Get details about an Operator package:</p>
+<pre><code class="language-bash">oc describe packagemanifest web-terminal -n openshift-marketplace
+</code></pre>
+<p>This shows the available channels, the current CSV version, and the CRDs the Operator provides.</p>
+<h3 id="install-an-operator-from-operatorhub">Install an Operator from OperatorHub</h3>
+<p>You will install the <strong>Web Terminal</strong> Operator, which provides a browser-based terminal directly in the OpenShift web console. This is a useful Operator because it is straightforward to install and you can immediately see the result in the web console. It also demonstrates <strong>dependency resolution</strong> — OLM will automatically install the DevWorkspace Operator that Web Terminal depends on.</p>
+<h4 id="step-1-create-the-subscription">Step 1: Create the Subscription</h4>
+<p>The Subscription tells OLM which Operator to install, from which catalog, and which update channel to follow.</p>
+<p>Create a file called <code>web-terminal-subscription.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: web-terminal
+  namespace: openshift-operators
+spec:
+  channel: fast
+  installPlanApproval: Automatic
+  name: web-terminal
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+</code></pre>
+<p>Key fields:
+- <strong>channel: fast</strong> — The update channel. Operators offer different channels (e.g., <code>stable</code>, <code>fast</code>) with different update cadences.
+- <strong>installPlanApproval: Automatic</strong> — OLM will automatically install and upgrade the Operator. Set to <code>Manual</code> if you want to approve each update.
+- <strong>source: redhat-operators</strong> — The CatalogSource to pull from.</p>
+<p>Apply it:</p>
+<pre><code class="language-bash">oc apply -f web-terminal-subscription.yaml
+</code></pre>
+<h4 id="step-2-monitor-the-installation">Step 2: Monitor the Installation</h4>
+<p>Watch the Subscription status:</p>
+<pre><code class="language-bash">oc get subscription web-terminal -n openshift-operators
+</code></pre>
+<p>Wait for the CSVs to appear and reach the <code>Succeeded</code> phase. This may take a minute or two:</p>
+<pre><code class="language-bash">oc get csv -n openshift-operators
+</code></pre>
+<pre><code>NAME                            DISPLAY                 VERSION   REPLACES                   PHASE
+devworkspace-operator.v0.39.0   DevWorkspace Operator   0.39.0    devworkspace-operator...   Succeeded
+web-terminal.v1.13.0            Web Terminal            1.13.0    web-terminal.v1.12.1...    Succeeded
+</code></pre>
+<p>Notice that <strong>two</strong> CSVs appeared — OLM automatically detected that Web Terminal depends on the DevWorkspace Operator and installed both. This is OLM's dependency resolution in action. The <code>Succeeded</code> phase means the Operator is installed and running.</p>
+<h4 id="step-3-verify-the-installation">Step 3: Verify the Installation</h4>
+<p>Check the InstallPlan that OLM created:</p>
+<pre><code class="language-bash">oc get installplan -n openshift-operators
+</code></pre>
+<p>This shows the concrete steps OLM took — which CRDs it created, which RBAC permissions it granted, and which Deployment it created for the Operator.</p>
+<p>Check the Operator's Deployments:</p>
+<pre><code class="language-bash">oc get deployments -n openshift-operators
+</code></pre>
+<p>You should see three Deployments — the Web Terminal controller and two DevWorkspace components:</p>
+<pre><code>NAME                              READY   UP-TO-DATE   AVAILABLE   AGE
+devworkspace-controller-manager   1/1     1            1           60s
+devworkspace-webhook-server       2/2     2            2           55s
+web-terminal-controller           1/1     1            1           60s
+</code></pre>
+<h4 id="step-4-explore-the-operators-crds">Step 4: Explore the Operator's CRDs</h4>
+<p>Every Operator brings its own CRDs. See what the Web Terminal Operator added:</p>
+<pre><code class="language-bash">oc get crd | grep devworkspace
+</code></pre>
+<p>Use <code>oc explain</code> to explore the new resource types:</p>
+<pre><code class="language-bash">oc explain devworkspace.spec
+</code></pre>
+<p>These CRDs are the Operator's API — you interact with the Operator by creating instances of its CRDs, just like you created a WebApp CR earlier.</p>
+<h4 id="step-5-use-the-operator">Step 5: Use the Operator</h4>
+<p>Open the OpenShift web console in your browser. You should now see a terminal icon (<code>&gt;_</code>) in the top-right toolbar. Click it to open a web-based terminal session directly in the console.</p>
+<p>This terminal is a <strong>Custom Resource</strong> managed by the Web Terminal Operator. The Operator detected the CR, provisioned a Pod with a terminal container, and connected it to the web console. This is the Operator pattern in action — you declare what you want (a terminal), and the Operator handles the how.</p>
+<h3 id="understanding-the-olm-resource-chain">Understanding the OLM Resource Chain</h3>
+<p>Just as Kubernetes has a resource hierarchy (Deployment → ReplicaSet → Pod), OLM has its own:</p>
+<pre><code>CatalogSource (index of available Operators)
+  └── PackageManifest (a single Operator's metadata)
+        └── Subscription (request to install the Operator)
+              └── InstallPlan (concrete installation steps)
+                    └── ClusterServiceVersion (Operator deployment + permissions)
+                          └── CRDs (the Operator's API)
+                                └── Custom Resources (instances managed by the Operator)
+</code></pre>
+<p>Each layer handles a different concern:
+- <strong>CatalogSource</strong> answers: <em>what Operators are available?</em>
+- <strong>Subscription</strong> answers: <em>which Operator do I want, and how should it update?</em>
+- <strong>InstallPlan</strong> answers: <em>what steps are needed to install it?</em>
+- <strong>CSV</strong> answers: <em>what permissions and Deployments does the Operator need?</em>
+- <strong>CRDs</strong> answer: <em>what API does the Operator expose?</em>
+- <strong>CRs</strong> answer: <em>what do I want the Operator to manage?</em></p>
+<h2 id="cleanup">Cleanup</h2>
+<p>Delete the CRD you created:</p>
+<pre><code class="language-bash">oc delete crd webapps.training.openshift.io
+</code></pre>
+<p>Delete the lab project:</p>
+<pre><code class="language-bash">oc delete project operators-lab
+</code></pre>
+<p>The Web Terminal Operator can remain installed — it is useful for the rest of the course.</p>
+<h2 id="congratulations">Congratulations</h2>
+<p>You have learned the Operator pattern from the ground up:</p>
+<ul>
+<li><strong>CRDs</strong> extend the Kubernetes API with new resource types, complete with validation and custom columns</li>
+<li><strong>Custom Resources</strong> are instances of CRDs that declare desired state</li>
+<li><strong>Operators</strong> are controllers that watch CRs and reconcile actual state to match</li>
+<li><strong>OLM</strong> manages the full lifecycle of Operators — installation, upgrades, and dependency resolution</li>
+<li><strong>OperatorHub</strong> provides a catalog of hundreds of pre-built Operators from Red Hat, partners, and the community</li>
+<li><strong>Subscriptions</strong> tell OLM which Operators to install and how to handle updates</li>
+</ul>
+<p>The Operator pattern is the foundation of OpenShift's architecture. Every cluster component — from networking to the image registry to the web console — is managed by an Operator. Understanding this pattern is essential for operating and extending OpenShift.</p>
+</body>
+</html>

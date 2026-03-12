@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploy Microservices in OpenShift</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="deploy-microservices-in-openshift">Deploy Microservices in OpenShift</h1>
+<p>In this lab, you will deploy a full-stack JavaScript application as microservices in OpenShift. You will learn how OpenShift can build container images directly from source code using Source-to-Image (S2I), how to connect microservices using environment variables, and how to add health checks so OpenShift can monitor your application.</p>
+<p>This lab has three parts:</p>
+<ol>
+<li><strong>Deploy the front end</strong> from a pre-built container image</li>
+<li><strong>Build and deploy the back end</strong> from source code using S2I</li>
+<li><strong>Connect the services</strong> using environment variables and add health monitoring</li>
+</ol>
+<h2 id="why-microservices">Why Microservices?</h2>
+<p>Traditional monolithic applications bundle everything — the user interface, business logic, and data access — into a single deployable unit. Microservices split these responsibilities into independent services that can be developed, deployed, and scaled separately.</p>
+<p>The application you will deploy is a URL shortener with a React front end and a Node.js back end. Each component runs in its own Pod with its own Service, and they communicate over HTTP. This separation means you can update the front end without touching the back end, scale them independently, and use different technologies for each.</p>
+<h2 id="project-setup">Project Setup</h2>
+<p>Create a dedicated project for this lab:</p>
+<pre><code class="language-bash">oc new-project microservices
+</code></pre>
+<h2 id="part-1-deploy-the-front-end">Part 1: Deploy the Front End</h2>
+<p>The front end is a React application that has already been built and published as a container image on Docker Hub. This is the simplest deployment model — you point OpenShift at an existing image, and it creates all the necessary resources.</p>
+<h3 id="deploy-the-front-end-image">Deploy the front-end image</h3>
+<p>The <code>oc new-app</code> command can create an application from a container image, a Git repository, or a template. Here you will use it with a container image:</p>
+<pre><code class="language-bash">oc new-app nodeshift/urlshortener-front
+</code></pre>
+<p>OpenShift pulls the image from Docker Hub and creates three resources:
+- An <strong>ImageStream</strong> that tracks the image
+- A <strong>Deployment</strong> that manages the Pod
+- A <strong>Service</strong> that provides internal networking</p>
+<h3 id="expose-the-front-end">Expose the front end</h3>
+<p>The front end is running inside the cluster, but no one can reach it from outside. Create a Route to expose it:</p>
+<pre><code class="language-bash">oc expose svc/urlshortener-front --port=8080
+</code></pre>
+<p>The <code>--port=8080</code> flag tells the Route which Service port to target, since this Service exposes multiple ports.</p>
+<h3 id="verify-the-front-end">Verify the front end</h3>
+<p>Get the Route URL:</p>
+<pre><code class="language-bash">oc get route urlshortener-front
+</code></pre>
+<p>Open the URL from the <code>HOST/PORT</code> column in your browser. You should see the URL shortener front end with:
+- A list of redirection URLs (currently empty)
+- A form to add new URLs (not yet functional)
+- An <strong>About</strong> page showing the status of the application components</p>
+<p>On the About page, all the status indicators are red because the front end has no back end to talk to. You will fix this in Part 3.</p>
+<h2 id="part-2-build-and-deploy-the-back-end">Part 2: Build and Deploy the Back End</h2>
+<p>Instead of using a pre-built image, you will build the back end directly from source code using OpenShift's <strong>Source-to-Image (S2I)</strong> toolkit.</p>
+<h3 id="what-is-source-to-image">What is Source-to-Image?</h3>
+<p>S2I is a build process built into OpenShift that:
+1. Detects the programming language from your source code
+2. Selects an appropriate builder image (Node.js, Python, Java, etc.)
+3. Combines your source code with the builder image to produce a runnable container
+4. Pushes the resulting image to the internal registry</p>
+<p>This means developers can deploy applications without writing a Dockerfile. OpenShift handles the entire build process.</p>
+<h3 id="build-the-back-end-from-github">Build the back end from GitHub</h3>
+<p>The back-end source code is in the <code>/back</code> directory of a GitHub repository. Use <code>oc new-app</code> with the repository URL, specifying both the builder image and the source directory:</p>
+<pre><code class="language-bash">oc new-app registry.access.redhat.com/ubi9/nodejs-20~https://github.com/nodeshift-blog-examples/urlshortener --context-dir=back
+</code></pre>
+<p>Let's break down this command:
+- <strong>registry.access.redhat.com/ubi9/nodejs-20</strong> — The Node.js 20 S2I builder image from Red Hat's public (unauthenticated) container registry. The <code>~</code> separates the builder image from the source code URL — this tells OpenShift to use S2I.
+- <strong>https://github.com/nodeshift-blog-examples/urlshortener</strong> — The Git repository containing the source code.
+- <strong>--context-dir=back</strong> — Only use the <code>/back</code> subdirectory of the repository.</p>
+<p>You should see output indicating that a build has started:</p>
+<pre><code>--&gt; Found container image ... (registry.access.redhat.com/ubi9/nodejs-20) ...
+
+    Node.js 20
+    ----------
+    Node.js 20 available as container is a base platform for building and running various Node.js 20 applications and frameworks.
+
+    * An image stream tag will be created as &quot;nodejs-20:latest&quot; that will track the source image
+    * A source build using source code from https://github.com/nodeshift-blog-examples/urlshortener will be created
+      * The resulting image will be pushed to image stream tag &quot;urlshortener:latest&quot;
+      * Use 'oc start-build' to trigger a new build
+
+--&gt; Creating resources ...
+    imagestream.image.openshift.io &quot;nodejs-20&quot; created
+    imagestream.image.openshift.io &quot;urlshortener&quot; created
+    buildconfig.build.openshift.io &quot;urlshortener&quot; created
+    deployment.apps &quot;urlshortener&quot; created
+    service &quot;urlshortener&quot; created
+--&gt; Success
+    Build scheduled, use 'oc logs -f buildconfig/urlshortener' to track its progress.
+</code></pre>
+<h3 id="monitor-the-build">Monitor the build</h3>
+<p>Follow the build logs in real time:</p>
+<pre><code class="language-bash">oc logs -f buildconfig/urlshortener
+</code></pre>
+<p>You will see OpenShift clone the repository, install Node.js dependencies with <code>npm install</code>, and build the container image. This takes a few minutes. When the build completes, you will see <code>Push successful</code>.</p>
+<p>Press <code>Ctrl+C</code> if the log stream does not exit automatically after the build completes.</p>
+<h3 id="configure-the-back-end-port">Configure the back-end port</h3>
+<p>The Node.js application uses an environment variable called <code>PORT</code> to determine which port to listen on. The S2I builder expects applications to listen on port 8080. Set this explicitly:</p>
+<pre><code class="language-bash">oc set env deployment/urlshortener PORT=8080
+</code></pre>
+<p>This triggers a new rollout of the Deployment with the updated environment variable. OpenShift performs a rolling update — the new Pod starts before the old one is removed, ensuring zero downtime.</p>
+<h3 id="expose-the-back-end">Expose the back end</h3>
+<p>Create a Route for the back end:</p>
+<pre><code class="language-bash">oc expose svc/urlshortener
+</code></pre>
+<p>There is no need to specify the port because the S2I builder configured the Service to use port 8080 by default.</p>
+<h3 id="test-the-back-end">Test the back end</h3>
+<p>Get the back-end Route URL:</p>
+<pre><code class="language-bash">oc get route urlshortener
+</code></pre>
+<p>Test the root endpoint:</p>
+<pre><code class="language-bash">curl -s http://$(oc get route urlshortener -o jsonpath='{.spec.host}')
+</code></pre>
+<p>You should see:</p>
+<pre><code>{&quot;msg&quot;:&quot;Hello&quot;}
+</code></pre>
+<p>Test the health endpoint:</p>
+<pre><code class="language-bash">curl -s http://$(oc get route urlshortener -o jsonpath='{.spec.host}')/health
+</code></pre>
+<p>You should see:</p>
+<pre><code>{&quot;server&quot;:true,&quot;database&quot;:false}
+</code></pre>
+<p>The server is running (<code>true</code>), but there is no MongoDB database deployed (<code>false</code>). This is expected for this lab.</p>
+<h2 id="part-3-connect-the-services">Part 3: Connect the Services</h2>
+<p>Now you will connect the front end to the back end and add health monitoring.</p>
+<h3 id="add-a-health-check">Add a health check</h3>
+<p>OpenShift can periodically call an endpoint on your Pod to verify the application is still responding. This is called a <strong>liveness probe</strong>. If the probe fails repeatedly, OpenShift restarts the Pod automatically.</p>
+<p>Add a liveness probe that calls the <code>/health</code> endpoint every 10 seconds:</p>
+<pre><code class="language-bash">oc set probe deployment/urlshortener --liveness --get-url=http://:8080/health --initial-delay-seconds=10 --period-seconds=10
+</code></pre>
+<ul>
+<li><strong>--liveness</strong> — This is a liveness probe (checks if the application is alive).</li>
+<li><strong>--get-url=http://:8080/health</strong> — Send an HTTP GET to port 8080 on the <code>/health</code> path. As long as it returns an HTTP 200 status code, the Pod is considered healthy.</li>
+<li><strong>--initial-delay-seconds=10</strong> — Wait 10 seconds after the container starts before sending the first probe. This gives the application time to initialize.</li>
+<li><strong>--period-seconds=10</strong> — Check every 10 seconds.</li>
+</ul>
+<p>Verify the probe was added:</p>
+<pre><code class="language-bash">oc describe deployment/urlshortener | grep -A5 &quot;Liveness&quot;
+</code></pre>
+<p>You should see:</p>
+<pre><code>    Liveness:   http-get http://:8080/health delay=10s timeout=1s period=10s #success=1 #failure=3
+</code></pre>
+<p>You can confirm the probe is working by checking the back-end Pod logs. You should see periodic <code>GET /health</code> requests:</p>
+<pre><code class="language-bash">oc logs deployment/urlshortener --tail=5
+</code></pre>
+<h3 id="link-the-front-end-to-the-back-end">Link the front end to the back end</h3>
+<p>The front-end application uses a <code>BASE_URL</code> environment variable to know where the back end is. You need to set this to the back-end Route URL.</p>
+<p>Get the back-end Route and set it as an environment variable on the front-end Deployment in a single command:</p>
+<pre><code class="language-bash">oc set env deployment/urlshortener-front BASE_URL=http://$(oc get route urlshortener -o jsonpath='{.spec.host}')
+</code></pre>
+<p>This triggers a new rollout of the front-end Deployment with the <code>BASE_URL</code> configured.</p>
+<h3 id="verify-the-connection">Verify the connection</h3>
+<p>Wait a few seconds for the new front-end Pod to start, then open the front end in your browser:</p>
+<pre><code class="language-bash">oc get route urlshortener-front -o jsonpath='{.spec.host}'
+</code></pre>
+<p>Navigate to the <strong>About</strong> page. The <strong>Node.js API</strong> status indicator should now show green with "Up and running." The <strong>Database</strong> and <strong>Redirector</strong> indicators remain red because those services are not deployed in this lab.</p>
+<h3 id="review-all-resources">Review all resources</h3>
+<p>View everything that was created in this project:</p>
+<pre><code class="language-bash">oc get all
+</code></pre>
+<p>You should see:
+- Two Deployments (front end and back end)
+- A completed Build Pod from the S2I process
+- Two Services for internal communication
+- Two Routes for external access
+- A BuildConfig and ImageStream for the S2I-built back end</p>
+<h2 id="cleanup">Cleanup</h2>
+<p>Delete the project and all resources:</p>
+<pre><code class="language-bash">oc delete project microservices
+</code></pre>
+<h2 id="congratulations">Congratulations</h2>
+<p>You have deployed a microservices application in OpenShift using two different methods:</p>
+<ul>
+<li><strong>Pre-built container images</strong> — The front end was deployed from a Docker Hub image using <code>oc new-app</code>. This is the simplest approach when images are already available.</li>
+<li><strong>Source-to-Image (S2I)</strong> — The back end was built directly from GitHub source code. OpenShift detected the Node.js runtime, built the container, and pushed it to the internal registry — no Dockerfile required.</li>
+<li><strong>Environment variables</strong> connected the two services, demonstrating how microservices communicate in a loosely coupled way.</li>
+<li><strong>Liveness probes</strong> allow OpenShift to continuously monitor the back end and automatically restart it if it stops responding.</li>
+</ul>
+<p>These patterns — deploying from images, building from source, connecting services through configuration, and adding health monitoring — are the foundation of running production microservices in OpenShift.</p>
+</body>
+</html>

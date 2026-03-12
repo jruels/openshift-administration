@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes Resources</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="kubernetes-resources">Kubernetes Resources</h1>
+<p>In this lab, you will explore the core Kubernetes resource hierarchy — Pods, ReplicaSets, Deployments, and Services — and understand how each layer builds on the one below it. By the end, you will see how these resources work together to deliver self-healing, scalable, zero-downtime applications in OpenShift.</p>
+<h2 id="project-setup">Project Setup</h2>
+<p>Start by creating a dedicated project for this lab.</p>
+<pre><code class="language-bash">oc new-project k8s-resources
+</code></pre>
+<p>You should see output confirming the new project:</p>
+<pre><code>Now using project &quot;k8s-resources&quot; on server &quot;https://api....&quot;
+</code></pre>
+<p>The standard nginx image needs to run as root, which OpenShift restricts by default through Security Context Constraints (SCCs). Grant the <code>anyuid</code> SCC to the default service account so that Pods in this project can run as any user:</p>
+<pre><code class="language-bash">oc adm policy add-scc-to-user anyuid -z default -n k8s-resources
+</code></pre>
+<pre><code>clusterrole.rbac.authorization.k8s.io/system:openshift:scc:anyuid added: &quot;default&quot;
+</code></pre>
+<p>This is a common pattern in OpenShift when running container images that were not designed to run as an arbitrary non-root user.</p>
+<h2 id="pods">Pods</h2>
+<p>A Pod is the smallest deployable unit in Kubernetes. It wraps one or more containers that share the same network namespace and storage volumes. Every container in a Pod gets the same IP address and can communicate with its neighbors over <code>localhost</code>.</p>
+<p>We will start by creating a standalone Pod to understand the basics before moving on to controllers that manage Pods for us.</p>
+<h3 id="create-a-pod">Create a Pod</h3>
+<p>Create a file called <code>pod.yaml</code> with the following contents:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  labels:
+    app: nginx
+    tier: web
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+    ports:
+    - containerPort: 80
+</code></pre>
+<p>A few things to note about this manifest:</p>
+<ul>
+<li><strong>apiVersion: v1</strong> — Pods are part of the core API group.</li>
+<li><strong>labels</strong> — We assign two labels (<code>app: nginx</code> and <code>tier: web</code>). Labels are key-value pairs that other resources use to find and select Pods.</li>
+<li><strong>containerPort: 80</strong> — This documents that the container listens on port 80. It does not publish the port externally.</li>
+</ul>
+<p>Apply the manifest:</p>
+<pre><code class="language-bash">oc apply -f pod.yaml
+</code></pre>
+<h3 id="examine-the-pod">Examine the Pod</h3>
+<p>Use <code>oc get pods</code> to confirm the Pod is running:</p>
+<pre><code class="language-bash">oc get pods
+</code></pre>
+<p>You should see:</p>
+<pre><code>NAME        READY   STATUS    RESTARTS   AGE
+nginx-pod   1/1     Running   0          10s
+</code></pre>
+<p>Get detailed information about the Pod, including its IP address, the node it was scheduled on, and recent events:</p>
+<pre><code class="language-bash">oc describe pod nginx-pod
+</code></pre>
+<h3 id="access-the-pod">Access the Pod</h3>
+<p>You can run a command inside the Pod to verify nginx is serving content:</p>
+<pre><code class="language-bash">oc exec nginx-pod -- curl -s http://localhost
+</code></pre>
+<p>You should see the default nginx welcome page HTML.</p>
+<h3 id="delete-the-pod">Delete the Pod</h3>
+<p>Now delete the Pod:</p>
+<pre><code class="language-bash">oc delete pod nginx-pod
+</code></pre>
+<p>Run <code>oc get pods</code> again:</p>
+<pre><code class="language-bash">oc get pods
+</code></pre>
+<pre><code>No resources found in k8s-resources namespace.
+</code></pre>
+<p>The Pod is gone — permanently. There is no controller watching over it, so nothing recreates it. This is the fundamental limitation of standalone Pods: they have no self-healing. If the Pod crashes, gets deleted, or the node it runs on goes down, it is lost forever.</p>
+<p>This limitation motivates the next section.</p>
+<h2 id="replicasets">ReplicaSets</h2>
+<p>A ReplicaSet is a controller that ensures a specified number of identical Pod replicas are running at all times. It continuously compares the <strong>desired</strong> state (how many replicas you asked for) against the <strong>actual</strong> state (how many are currently running) and creates or deletes Pods to reconcile the difference.</p>
+<h3 id="create-a-replicaset">Create a ReplicaSet</h3>
+<p>Create a file called <code>replicaset.yaml</code> with the following contents:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: nginx-replicaset
+  labels:
+    app: nginx
+    tier: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+      tier: web
+  template:
+    metadata:
+      labels:
+        app: nginx
+        tier: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>Key fields to understand:</p>
+<ul>
+<li><strong>replicas: 3</strong> — The desired number of Pod copies.</li>
+<li><strong>selector.matchLabels</strong> — The ReplicaSet only manages Pods whose labels match <strong>both</strong> <code>app: nginx</code> and <code>tier: web</code>. If either label is missing or different, the ReplicaSet will not count that Pod toward its replica total.</li>
+<li><strong>template</strong> — The Pod template used to create new replicas. Notice the labels in the template must match the selector — if they don't, the API server will reject the manifest.</li>
+</ul>
+<p>Apply the manifest:</p>
+<pre><code class="language-bash">oc apply -f replicaset.yaml
+</code></pre>
+<h3 id="verify-the-replicas">Verify the Replicas</h3>
+<p>Confirm that three Pods are running:</p>
+<pre><code class="language-bash">oc get pods
+</code></pre>
+<p>You should see three Pods with names that start with <code>nginx-replicaset-</code>:</p>
+<pre><code>NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-abc12   1/1     Running   0          15s
+nginx-replicaset-def34   1/1     Running   0          15s
+nginx-replicaset-ghi56   1/1     Running   0          15s
+</code></pre>
+<p>You can also inspect the ReplicaSet itself:</p>
+<pre><code class="language-bash">oc get replicaset nginx-replicaset
+</code></pre>
+<pre><code>NAME               DESIRED   CURRENT   READY   AGE
+nginx-replicaset   3         3         3       30s
+</code></pre>
+<h3 id="self-healing-demo">Self-Healing Demo</h3>
+<p>Delete one of the Pods (replace the Pod name with one from your output):</p>
+<pre><code class="language-bash">oc delete pod nginx-replicaset-abc12
+</code></pre>
+<p>Immediately list Pods again:</p>
+<pre><code class="language-bash">oc get pods
+</code></pre>
+<p>You will still see three Pods — the ReplicaSet detected that the actual count dropped below the desired count and immediately created a replacement. This is the <strong>self-healing</strong> behavior that standalone Pods lack.</p>
+<h3 id="scale-the-replicaset">Scale the ReplicaSet</h3>
+<p>Scale up to 5 replicas:</p>
+<pre><code class="language-bash">oc scale replicaset nginx-replicaset --replicas=5
+</code></pre>
+<p>Verify:</p>
+<pre><code class="language-bash">oc get pods
+</code></pre>
+<p>You should now see five Pods running. Scale back down to 3:</p>
+<pre><code class="language-bash">oc scale replicaset nginx-replicaset --replicas=3
+</code></pre>
+<h3 id="clean-up-the-replicaset">Clean Up the ReplicaSet</h3>
+<p>Delete the ReplicaSet before moving on:</p>
+<pre><code class="language-bash">oc delete replicaset nginx-replicaset
+</code></pre>
+<p>This also deletes all of the Pods it was managing.</p>
+<p>ReplicaSets give us self-healing and scaling, but they have an important limitation: they provide no mechanism for rolling updates. If you want to change the container image, you would have to delete the old ReplicaSet and create a new one, causing downtime. Deployments solve this problem.</p>
+<h2 id="deployments">Deployments</h2>
+<p>A Deployment is the standard way to run stateless applications in Kubernetes. It manages ReplicaSets on your behalf and adds the ability to perform <strong>rolling updates</strong> and <strong>rollbacks</strong> with zero downtime.</p>
+<p>When you update a Deployment (for example, changing the container image), it creates a <strong>new</strong> ReplicaSet with the updated Pod template and gradually scales it up while scaling the old ReplicaSet down. The old ReplicaSet is kept around (with zero replicas) so you can roll back instantly if something goes wrong.</p>
+<h3 id="create-a-deployment">Create a Deployment</h3>
+<p>Create a file called <code>deployment.yaml</code> with the following contents:</p>
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+    tier: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+      tier: web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: nginx
+        tier: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+</code></pre>
+<p>The new field here is <strong>strategy</strong>:</p>
+<ul>
+<li><strong>type: RollingUpdate</strong> — Pods are replaced incrementally rather than all at once.</li>
+<li><strong>maxSurge: 1</strong> — At most 1 extra Pod can exist above the desired replica count during the update.</li>
+<li><strong>maxUnavailable: 0</strong> — No Pods may be unavailable during the update. This means the new Pod must be Ready before the old one is terminated, ensuring zero downtime.</li>
+</ul>
+<p>Apply the manifest:</p>
+<pre><code class="language-bash">oc apply -f deployment.yaml
+</code></pre>
+<h3 id="examine-the-resource-chain">Examine the Resource Chain</h3>
+<p>One of the most important things to understand is the naming chain that connects Deployments, ReplicaSets, and Pods. List all three:</p>
+<pre><code class="language-bash">oc get deployment,replicaset,pods
+</code></pre>
+<p>You will see something like:</p>
+<pre><code>NAME                               READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/nginx-deployment   3/3     3            3           30s
+
+NAME                                          DESIRED   CURRENT   READY   AGE
+replicaset.apps/nginx-deployment-5d5cf8d7fc   3         3         3       30s
+
+NAME                                    READY   STATUS    RESTARTS   AGE
+pod/nginx-deployment-5d5cf8d7fc-abc12   1/1     Running   0          30s
+pod/nginx-deployment-5d5cf8d7fc-def34   1/1     Running   0          30s
+pod/nginx-deployment-5d5cf8d7fc-ghi56   1/1     Running   0          30s
+</code></pre>
+<p>Notice the naming pattern:
+- <strong>Deployment:</strong> <code>nginx-deployment</code>
+- <strong>ReplicaSet:</strong> <code>nginx-deployment-5d5cf8d7fc</code> (Deployment name + template hash)
+- <strong>Pods:</strong> <code>nginx-deployment-5d5cf8d7fc-abc12</code> (ReplicaSet name + random suffix)</p>
+<p>This chain makes it easy to trace any Pod back to the Deployment that created it.</p>
+<h3 id="rolling-update">Rolling Update</h3>
+<p>Now perform a rolling update by changing the image from <code>nginx:1.25</code> to <code>nginx:1.27</code>:</p>
+<pre><code class="language-bash">oc set image deployment/nginx-deployment nginx=nginx:1.27
+</code></pre>
+<p>Watch the rollout progress:</p>
+<pre><code class="language-bash">oc rollout status deployment/nginx-deployment
+</code></pre>
+<p>You should see messages indicating Pods are being replaced one at a time:</p>
+<pre><code>Waiting for deployment &quot;nginx-deployment&quot; rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment &quot;nginx-deployment&quot; rollout to finish: 2 out of 3 new replicas have been updated...
+deployment &quot;nginx-deployment&quot; successfully rolled out
+</code></pre>
+<p>List ReplicaSets to see what happened behind the scenes:</p>
+<pre><code class="language-bash">oc get replicasets
+</code></pre>
+<pre><code>NAME                          DESIRED   CURRENT   READY   AGE
+nginx-deployment-5d5cf8d7fc   0         0         0       2m
+nginx-deployment-7bc4f9875d   3         3         3       30s
+</code></pre>
+<p>The old ReplicaSet has been scaled to 0 but still exists. The new ReplicaSet now manages all 3 Pods. This is how Deployments enable instant rollbacks.</p>
+<h3 id="rollout-history-and-rollback">Rollout History and Rollback</h3>
+<p>View the rollout history:</p>
+<pre><code class="language-bash">oc rollout history deployment/nginx-deployment
+</code></pre>
+<p>If you need to revert to the previous version, perform a rollback:</p>
+<pre><code class="language-bash">oc rollout undo deployment/nginx-deployment
+</code></pre>
+<p>Watch the rollback complete:</p>
+<pre><code class="language-bash">oc rollout status deployment/nginx-deployment
+</code></pre>
+<p>Verify the image is back to <code>nginx:1.25</code>:</p>
+<pre><code class="language-bash">oc describe deployment nginx-deployment | grep Image
+</code></pre>
+<pre><code>    Image:        nginx:1.25
+</code></pre>
+<p>Before moving on, update the Deployment back to <code>nginx:1.27</code> so we have the latest image for the Services section:</p>
+<pre><code class="language-bash">oc set image deployment/nginx-deployment nginx=nginx:1.27
+oc rollout status deployment/nginx-deployment
+</code></pre>
+<h2 id="services">Services</h2>
+<p>Pod IP addresses are ephemeral — they change every time a Pod is recreated. A Service provides a <strong>stable IP address</strong> and <strong>DNS name</strong> that automatically routes traffic to the current set of healthy Pods matching its selector. It also load-balances traffic across multiple replicas.</p>
+<h3 id="create-a-service">Create a Service</h3>
+<p>Create a file called <code>service.yaml</code> with the following contents:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+    tier: web
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
+</code></pre>
+<p>Key fields:</p>
+<ul>
+<li><strong>selector</strong> — The Service will route traffic to any Pod with labels <code>app: nginx</code> AND <code>tier: web</code>. This must match the labels on the Deployment's Pod template.</li>
+<li><strong>port: 80</strong> — The port the Service listens on.</li>
+<li><strong>targetPort: 80</strong> — The port on the Pod to forward traffic to.</li>
+<li><strong>type: ClusterIP</strong> — This is the default type. The Service gets a cluster-internal IP address that is only reachable from within the cluster.</li>
+</ul>
+<p>Apply the manifest:</p>
+<pre><code class="language-bash">oc apply -f service.yaml
+</code></pre>
+<h3 id="examine-the-service-and-endpoints">Examine the Service and Endpoints</h3>
+<p>View the Service:</p>
+<pre><code class="language-bash">oc get service nginx-service
+</code></pre>
+<pre><code>NAME            TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+nginx-service   ClusterIP   172.30.45.123   &lt;none&gt;        80/TCP    10s
+</code></pre>
+<p>The CLUSTER-IP is stable — it will not change as long as the Service exists. Now examine the endpoints, which are the actual Pod IPs that the Service is routing to:</p>
+<pre><code class="language-bash">oc describe service nginx-service
+</code></pre>
+<p>In the output, look for the <strong>Endpoints</strong> line — you should see three Pod IPs listed, one for each replica. When Pods are added or removed, the endpoint list updates automatically.</p>
+<h3 id="test-with-dns">Test with DNS</h3>
+<p>Every Service gets a DNS entry in the format <code>&lt;service-name&gt;.&lt;namespace&gt;.svc.cluster.local</code>. You can test this from inside the cluster using a temporary Pod:</p>
+<pre><code class="language-bash">oc run test-dns --image=busybox --rm -it --restart=Never -- wget -qO- http://nginx-service.k8s-resources.svc.cluster.local
+</code></pre>
+<p>You should see the nginx welcome page HTML. The DNS name resolved to the Service's ClusterIP, which then load-balanced the request to one of the three Pods.</p>
+<p>After the command completes, the temporary Pod is automatically removed (thanks to <code>--rm</code>).</p>
+<h3 id="expose-the-service-externally">Expose the Service Externally</h3>
+<p>In OpenShift, the idiomatic way to expose a Service externally is by creating a Route. This gives you a public URL backed by the cluster's router:</p>
+<pre><code class="language-bash">oc expose service nginx-service
+</code></pre>
+<p>Retrieve the Route URL:</p>
+<pre><code class="language-bash">oc get route nginx-service
+</code></pre>
+<pre><code>NAME            HOST/PORT                                              PATH   SERVICES        PORT   TERMINATION   WILDCARD
+nginx-service   nginx-service-k8s-resources.apps.example.com                  nginx-service   80                   None
+</code></pre>
+<p>You can now visit the URL from the <code>HOST/PORT</code> column in your web browser and see the nginx welcome page served from one of your Pods.</p>
+<h2 id="putting-it-all-together">Putting It All Together</h2>
+<p>At this point, you have built the complete resource hierarchy that underpins nearly every application in OpenShift. Here is how the pieces connect:</p>
+<pre><code>Route (external URL)
+  └── Service (stable IP + DNS + load balancing)
+        └── Deployment (rolling updates + rollback)
+              └── ReplicaSet (desired replica count + self-healing)
+                    └── Pods (running containers)
+</code></pre>
+<p>View everything in the project:</p>
+<pre><code class="language-bash">oc get all
+</code></pre>
+<p>This shows your Deployment, ReplicaSet, Pods, Service, and Route in a single view.</p>
+<h3 id="final-self-healing-test">Final Self-Healing Test</h3>
+<p>Delete one of the Pods and verify the system heals itself end-to-end:</p>
+<pre><code class="language-bash">oc delete $(oc get pods -o name | head -1)
+</code></pre>
+<p>Watch the Pods:</p>
+<pre><code class="language-bash">oc get pods
+</code></pre>
+<p>Within seconds, you should see a replacement Pod starting up. The Service automatically adds the new Pod to its endpoint list, and the Route continues to serve traffic without interruption. This is the power of the Kubernetes resource hierarchy — each layer handles a different concern, and together they deliver a resilient, self-healing system.</p>
+<h2 id="cleanup">Cleanup</h2>
+<p>Delete the project and all resources within it:</p>
+<pre><code class="language-bash">oc delete project k8s-resources
+</code></pre>
+<h2 id="congratulations">Congratulations</h2>
+<p>You have built and explored the full Kubernetes resource hierarchy from the ground up:</p>
+<ul>
+<li><strong>Pods</strong> are the atomic unit — but they have no self-healing.</li>
+<li><strong>ReplicaSets</strong> add self-healing and scaling by continuously reconciling desired vs actual state.</li>
+<li><strong>Deployments</strong> manage ReplicaSets to provide rolling updates and instant rollbacks.</li>
+<li><strong>Services</strong> decouple networking from the Pod lifecycle with stable IPs, DNS names, and load balancing.</li>
+<li><strong>Routes</strong> (OpenShift-specific) expose Services to external traffic.</li>
+</ul>
+<p>These are the foundational building blocks that every other OpenShift resource builds upon.</p>
+</body>
+</html>

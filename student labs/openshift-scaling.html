@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scaling OpenShift</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="scaling-openshift">Scaling OpenShift</h1>
+<p>In this lab, you will explore how OpenShift manages cluster infrastructure through MachineSets and MachineConfigs, and then configure autoscaling so the cluster automatically adds worker nodes when workloads demand more resources.</p>
+<p>This lab has three parts:</p>
+<ol>
+<li><strong>Explore cluster infrastructure</strong> — Understand MachineSets, Machines, and MachineConfigs</li>
+<li><strong>Configure autoscaling</strong> — Create a ClusterAutoscaler and MachineAutoscaler</li>
+<li><strong>Trigger and observe autoscaling</strong> — Deploy a resource-intensive batch job and watch the cluster scale up</li>
+</ol>
+<h2 id="part-1-explore-cluster-infrastructure">Part 1: Explore Cluster Infrastructure</h2>
+<p>Before configuring autoscaling, you need to understand the resources that OpenShift uses to manage worker nodes.</p>
+<h3 id="machinesets-and-machines">MachineSets and Machines</h3>
+<p>In OpenShift, <strong>Machines</strong> represent individual nodes (EC2 instances in AWS). <strong>MachineSets</strong> are controllers that manage a set of Machines, similar to how a ReplicaSet manages Pods. The MachineSet ensures the desired number of Machines are running and replaces any that fail.</p>
+<p>List the MachineSets in your cluster:</p>
+<pre><code class="language-bash">oc get machinesets -n openshift-machine-api
+</code></pre>
+<pre><code>NAME                              DESIRED   CURRENT   READY   AVAILABLE   AGE
+trainer-xxxxx-worker-us-west-1b   1         1         1       1           7h
+trainer-xxxxx-worker-us-west-1c   0         0                             7h
+</code></pre>
+<p>You have two MachineSets — one per availability zone. The <code>us-west-1b</code> MachineSet has 1 replica (one running worker node). The <code>us-west-1c</code> MachineSet has 0 replicas (no workers in that zone).</p>
+<p>Store the active MachineSet name in a variable — you will use this throughout the lab:</p>
+<pre><code class="language-bash">MACHINESET=$(oc get machinesets -n openshift-machine-api -o jsonpath='{.items[?(@.spec.replicas&gt;0)].metadata.name}')
+echo &quot;MachineSet: $MACHINESET&quot;
+</code></pre>
+<p>Now list the Machines managed by this MachineSet:</p>
+<pre><code class="language-bash">oc get machines -n openshift-machine-api
+</code></pre>
+<pre><code>NAME                                    PHASE     TYPE          REGION      ZONE         AGE
+trainer-xxxxx-master-0                  Running   m6i.2xlarge   us-west-1   us-west-1b   7h
+trainer-xxxxx-worker-us-west-1b-xxxxx   Running   m6i.xlarge    us-west-1   us-west-1b   7h
+</code></pre>
+<p>Each Machine maps to an EC2 instance. The <strong>PHASE</strong> column shows the Machine lifecycle: <code>Provisioning</code> (EC2 instance starting), <code>Provisioned</code> (instance up, node registering), <code>Running</code> (node joined and healthy), <code>Deleting</code> (node being drained and terminated).</p>
+<p>Examine the MachineSet configuration:</p>
+<pre><code class="language-bash">oc get machineset $MACHINESET -n openshift-machine-api -o yaml | head -40
+</code></pre>
+<p>Key fields in the MachineSet spec:
+- <strong>spec.replicas</strong> — How many Machines to maintain (like a ReplicaSet)
+- <strong>spec.template.spec.providerSpec</strong> — Cloud-specific configuration (instance type, AMI, subnet, security groups)
+- <strong>metadata.annotations</strong> — Resource capacity hints used by the autoscaler (<code>machine.openshift.io/vCPU</code>, <code>machine.openshift.io/memoryMb</code>)</p>
+<h3 id="machineconfigs">MachineConfigs</h3>
+<p><strong>MachineConfigs</strong> define the operating system configuration for nodes — things like systemd units, kernel parameters, and file contents. The Machine Config Operator (MCO) applies these configurations to nodes and handles rolling reboots when configurations change.</p>
+<p>List the MachineConfigs:</p>
+<pre><code class="language-bash">oc get machineconfigs
+</code></pre>
+<pre><code>NAME                                               GENERATEDBYCONTROLLER                      IGNITIONVERSION   AGE
+00-master                                          074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+00-worker                                          074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+01-master-container-runtime                        074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+01-master-kubelet                                  074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+01-worker-container-runtime                        074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+01-worker-kubelet                                  074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+...
+rendered-master-xxxxx                              074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+rendered-worker-xxxxx                              074b3c0953cb81283d7d129e4c3ba6b1a95eb090   3.5.0             7h
+</code></pre>
+<p>The naming convention tells you what each MachineConfig does:
+- <strong>00-master / 00-worker</strong> — Base OS configuration for each role
+- <strong>01-master-kubelet / 01-worker-kubelet</strong> — Kubelet settings
+- <strong>01-master-container-runtime / 01-worker-container-runtime</strong> — Container runtime settings (CRI-O)
+- <strong>rendered-master-xxxxx / rendered-worker-xxxxx</strong> — The MCO merges all MachineConfigs for a role into a single "rendered" config. This is what actually gets applied to nodes.</p>
+<p>Check which rendered config the worker nodes are using:</p>
+<pre><code class="language-bash">oc get machineconfigpool worker
+</code></pre>
+<pre><code>NAME     CONFIG                           UPDATED   UPDATING   DEGRADED   MACHINECOUNT   READYMACHINECOUNT   ...
+worker   rendered-worker-xxxxx            True      False      False      1              1                   ...
+</code></pre>
+<p>The <code>UPDATED: True</code> and <code>UPDATING: False</code> columns confirm that all worker nodes are running the current configuration. If you add a new MachineConfig, the MCO will create a new rendered config and roll it out to nodes one at a time.</p>
+<h2 id="part-2-configure-autoscaling">Part 2: Configure Autoscaling</h2>
+<p>OpenShift autoscaling uses two resources that work together:
+- <strong>ClusterAutoscaler</strong> — Cluster-wide policy: maximum number of nodes, CPU/memory limits, scale-down behavior
+- <strong>MachineAutoscaler</strong> — Per-MachineSet policy: minimum and maximum replicas for a specific MachineSet</p>
+<h3 id="create-the-clusterautoscaler">Create the ClusterAutoscaler</h3>
+<p>The ClusterAutoscaler watches for Pods that cannot be scheduled due to insufficient resources. When it detects unschedulable Pods, it instructs a MachineSet to add more Machines.</p>
+<p>Create a file called <code>cluster-autoscaler.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: autoscaling.openshift.io/v1
+kind: ClusterAutoscaler
+metadata:
+  name: default
+spec:
+  podPriorityThreshold: -10
+  resourceLimits:
+    maxNodesTotal: 3
+    cores:
+      min: 8
+      max: 128
+    memory:
+      min: 4
+      max: 256
+  logVerbosity: 4
+  scaleDown:
+    enabled: true
+    delayAfterAdd: 10m
+    delayAfterDelete: 5m
+    delayAfterFailure: 30s
+    unneededTime: 5m
+    utilizationThreshold: &quot;0.4&quot;
+</code></pre>
+<p>Key fields:
+- <strong>maxNodesTotal: 3</strong> — The cluster will never exceed 3 total nodes (1 master + 2 workers max)
+- <strong>podPriorityThreshold: -10</strong> — Only Pods with priority above this trigger scale-up
+- <strong>scaleDown.enabled: true</strong> — Allow the autoscaler to remove underutilized nodes
+- <strong>scaleDown.unneededTime: 5m</strong> — A node must be underutilized for 5 minutes before removal
+- <strong>scaleDown.utilizationThreshold: "0.4"</strong> — A node is "underutilized" if resource usage is below 40%
+- <strong>logVerbosity: 4</strong> — Detailed logging so you can see the autoscaler's decisions</p>
+<p>Apply the manifest:</p>
+<pre><code class="language-bash">oc apply -f cluster-autoscaler.yaml
+</code></pre>
+<p>Verify it was created:</p>
+<pre><code class="language-bash">oc get clusterautoscaler default
+</code></pre>
+<pre><code>NAME      AGE
+default   5s
+</code></pre>
+<h3 id="create-the-machineautoscaler">Create the MachineAutoscaler</h3>
+<p>The ClusterAutoscaler needs a MachineAutoscaler to know <em>which</em> MachineSet to scale. The MachineAutoscaler sets the minimum and maximum replica count for a specific MachineSet.</p>
+<p>Create a file called <code>machine-autoscaler.yaml</code>, replacing <code>MACHINESET_NAME</code> with your actual MachineSet name from Part 1:</p>
+<pre><code class="language-yaml">apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: MACHINESET_NAME
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 2
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: MACHINESET_NAME
+</code></pre>
+<p>You can use <code>sed</code> to replace the placeholder with your actual MachineSet name:</p>
+<pre><code class="language-bash">sed -i &quot;s/MACHINESET_NAME/$MACHINESET/g&quot; machine-autoscaler.yaml
+</code></pre>
+<p>Apply the manifest:</p>
+<pre><code class="language-bash">oc apply -f machine-autoscaler.yaml
+</code></pre>
+<p>Verify it was created and references the correct MachineSet:</p>
+<pre><code class="language-bash">oc get machineautoscaler -n openshift-machine-api
+</code></pre>
+<pre><code>NAME                              REF KIND     REF NAME                          MIN   MAX   AGE
+trainer-xxxxx-worker-us-west-1b   MachineSet   trainer-xxxxx-worker-us-west-1b   1     2     5s
+</code></pre>
+<p>The autoscaler will maintain between 1 and 2 worker nodes. Currently you have 1 worker, so the autoscaler will add a second worker when the existing node cannot handle the workload.</p>
+<h3 id="verify-the-baseline">Verify the baseline</h3>
+<p>Before triggering autoscaling, record the current state:</p>
+<pre><code class="language-bash">oc get nodes
+</code></pre>
+<pre><code>NAME                                        STATUS   ROLES                  AGE   VERSION
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 7h    v1.34.2
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    control-plane,master   7h    v1.34.2
+</code></pre>
+<p>You should see 2 nodes: 1 master and 1 worker.</p>
+<h2 id="part-3-trigger-and-observe-autoscaling">Part 3: Trigger and Observe Autoscaling</h2>
+<h3 id="deploy-a-resource-intensive-batch-job">Deploy a resource-intensive batch job</h3>
+<p>Create a project for the test workload:</p>
+<pre><code class="language-bash">oc new-project scaling-test
+</code></pre>
+<p>Create a batch Job that requests more resources than a single worker can handle. Each Pod requests 500m CPU (half a core), and the Job creates 50 Pods in parallel. Since a worker node has approximately 3500m allocatable CPU, only about 7 Pods fit on one node — the remaining Pods become unschedulable, triggering the autoscaler.</p>
+<p>Create a file called <code>batch.yaml</code>:</p>
+<pre><code class="language-yaml">apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: work-queue-
+spec:
+  template:
+    spec:
+      containers:
+      - name: work
+        image: busybox
+        command: [&quot;sleep&quot;, &quot;300&quot;]
+        resources:
+          requests:
+            memory: 500Mi
+            cpu: 500m
+      restartPolicy: Never
+  backoffLimit: 4
+  completions: 50
+  parallelism: 50
+</code></pre>
+<p>Key fields:
+- <strong>parallelism: 50</strong> — Launch 50 Pods simultaneously
+- <strong>completions: 50</strong> — The Job finishes when 50 Pods complete successfully
+- <strong>resources.requests</strong> — Each Pod needs 500m CPU and 500Mi memory. This deliberately exceeds what one node can provide.
+- <strong>generateName</strong> — Each Job gets a unique name with a random suffix (since we use <code>oc create</code> instead of <code>oc apply</code>)</p>
+<p>Submit the Job:</p>
+<pre><code class="language-bash">oc create -f batch.yaml
+</code></pre>
+<h3 id="watch-the-autoscaler-respond">Watch the autoscaler respond</h3>
+<p>Check the Job and Pod status:</p>
+<pre><code class="language-bash">oc get job
+</code></pre>
+<pre><code>NAME               STATUS    COMPLETIONS   DURATION   AGE
+work-queue-xxxxx   Running   0/50          5s         5s
+</code></pre>
+<p>Count how many Pods are in each state:</p>
+<pre><code class="language-bash">oc get pods --no-headers | awk '{print $3}' | sort | uniq -c
+</code></pre>
+<pre><code>     47 Pending
+      3 Running
+</code></pre>
+<p>Most Pods are Pending because the single worker node does not have enough CPU to schedule them all. The autoscaler detects these unschedulable Pods and triggers a scale-up.</p>
+<h3 id="monitor-the-scale-up">Monitor the scale-up</h3>
+<p>Watch the Machines to see the new node being provisioned:</p>
+<pre><code class="language-bash">oc get machines -n openshift-machine-api -w
+</code></pre>
+<p>Within 10–15 seconds, you should see a new Machine appear with the <code>Provisioning</code> phase. Press <code>Ctrl+C</code> once you see it.</p>
+<pre><code>NAME                                    PHASE          TYPE          REGION      ZONE         AGE
+trainer-xxxxx-master-0                  Running        m6i.2xlarge   us-west-1   us-west-1b   7h
+trainer-xxxxx-worker-us-west-1b-xxxxx   Running        m6i.xlarge    us-west-1   us-west-1b   7h
+trainer-xxxxx-worker-us-west-1b-xxxxx   Provisioning   m6i.xlarge    us-west-1   us-west-1b   5s
+</code></pre>
+<p>The new Machine progresses through these phases:
+1. <strong>Provisioning</strong> — The AWS EC2 instance is being created (~30 seconds)
+2. <strong>Provisioned</strong> — The instance is running, the node is booting and registering with the cluster (~2 minutes)
+3. <strong>Running</strong> — The node has joined the cluster and is Ready</p>
+<p>You can also view the autoscaler's decision-making by checking its logs:</p>
+<pre><code class="language-bash">oc -n openshift-machine-api logs -l cluster-autoscaler=default --tail=5
+</code></pre>
+<p>Look for messages about "Scale-up" and "unschedulable pods".</p>
+<h3 id="verify-the-new-node">Verify the new node</h3>
+<p>Wait 3–4 minutes for the new node to fully join, then verify:</p>
+<pre><code class="language-bash">oc get nodes
+</code></pre>
+<pre><code>NAME                                        STATUS   ROLES                  AGE     VERSION
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 3m      v1.34.2
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 7h      v1.34.2
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    control-plane,master   7h      v1.34.2
+</code></pre>
+<p>You now have 3 nodes — 1 master and 2 workers. The autoscaler added a worker to handle the batch workload.</p>
+<p>Check the MachineSet to confirm it was scaled:</p>
+<pre><code class="language-bash">oc get machineset -n openshift-machine-api
+</code></pre>
+<pre><code>NAME                              DESIRED   CURRENT   READY   AVAILABLE   AGE
+trainer-xxxxx-worker-us-west-1b   2         2         2       2           7h
+trainer-xxxxx-worker-us-west-1c   0         0                             7h
+</code></pre>
+<p>The DESIRED count went from 1 to 2 — the autoscaler updated the MachineSet replica count.</p>
+<p>Check the Pod status again:</p>
+<pre><code class="language-bash">oc get pods --no-headers | awk '{print $3}' | sort | uniq -c
+</code></pre>
+<p>More Pods should now be Running since the new node provides additional CPU capacity. Some Pods may still be Pending because even 2 nodes cannot run all 50 Pods simultaneously at 500m CPU each (each node fits ~7 Pods).</p>
+<h2 id="cleanup">Cleanup</h2>
+<p>Delete the test workload and project:</p>
+<pre><code class="language-bash">oc delete project scaling-test
+</code></pre>
+<p>Delete the autoscalers:</p>
+<pre><code class="language-bash">oc delete clusterautoscaler default
+oc delete machineautoscaler $MACHINESET -n openshift-machine-api
+</code></pre>
+<p>When you delete the MachineAutoscaler and ClusterAutoscaler, the MachineSet replica count stays at whatever the autoscaler set it to (2 in this case). The autoscaler does not scale back down on deletion. Scale the MachineSet back to 1 worker:</p>
+<pre><code class="language-bash">oc scale machineset $MACHINESET -n openshift-machine-api --replicas=1
+</code></pre>
+<p>Verify the extra Machine is being removed:</p>
+<pre><code class="language-bash">oc get machines -n openshift-machine-api
+</code></pre>
+<p>You should see one worker Machine in <code>Deleting</code> phase. The node is drained (existing Pods are evicted) and then the EC2 instance is terminated. This takes 2–3 minutes.</p>
+<p>Wait until only the original master and one worker remain:</p>
+<pre><code class="language-bash">oc get nodes
+</code></pre>
+<pre><code>NAME                                        STATUS   ROLES                  AGE   VERSION
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    worker                 10m   v1.34.2
+ip-10-0-xx-xx.us-west-1.compute.internal    Ready    control-plane,master   7h    v1.34.2
+</code></pre>
+<p>Clean up the YAML files:</p>
+<pre><code class="language-bash">rm -f cluster-autoscaler.yaml machine-autoscaler.yaml batch.yaml
+</code></pre>
+<h2 id="congratulations">Congratulations</h2>
+<p>You have explored OpenShift cluster infrastructure and configured autoscaling:</p>
+<ul>
+<li><strong>Investigated MachineSets</strong> to understand how OpenShift manages worker nodes as a set with a desired replica count</li>
+<li><strong>Reviewed MachineConfigs</strong> to see how the Machine Config Operator applies OS-level configuration to nodes</li>
+<li><strong>Created a ClusterAutoscaler</strong> with resource limits and scale-down policies</li>
+<li><strong>Created a MachineAutoscaler</strong> that allows a MachineSet to scale between 1 and 2 replicas</li>
+<li><strong>Triggered autoscaling</strong> by deploying a batch job that exceeded a single node's capacity</li>
+<li><strong>Observed the full lifecycle</strong> — Provisioning, Provisioned, Running — as a new EC2 instance joined the cluster</li>
+<li><strong>Cleaned up</strong> by scaling the MachineSet back to its original size</li>
+</ul>
+<p>The key insight is that OpenShift autoscaling works at the infrastructure level, not just the Pod level. The ClusterAutoscaler adds actual compute capacity (new VMs) when existing nodes are full, and removes them when they are underutilized — automating what would otherwise be a manual process of launching and configuring new nodes.</p>
+</body>
+</html>

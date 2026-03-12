@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Automation Tools for OpenShift</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --code-bg: #f4f4f8;
+    --code-border: #d1d5db;
+    --pre-bg: #1e1e2e;
+    --pre-text: #cdd6f4;
+    --link: #2563eb;
+    --heading: #0f172a;
+    --table-border: #d1d5db;
+    --table-header-bg: #f1f5f9;
+    --blockquote-border: #3b82f6;
+    --blockquote-bg: #eff6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); margin: 1.5rem 0 1rem; border-bottom: 2px solid var(--table-border); padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+  h3 { font-size: 1.25rem; color: var(--heading); margin: 1.5rem 0 0.5rem; }
+  h4 { font-size: 1.1rem; color: var(--heading); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.75rem 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+  }
+  pre {
+    background: var(--pre-bg);
+    color: var(--pre-text);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+  }
+  ul, ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+  li { margin: 0.3rem 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--table-border);
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+  }
+  th { background: var(--table-header-bg); font-weight: 600; }
+  blockquote {
+    border-left: 4px solid var(--blockquote-border);
+    background: var(--blockquote-bg);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  hr { border: none; border-top: 1px solid var(--table-border); margin: 2rem 0; }
+  .nav { margin-bottom: 1.5rem; }
+  .nav a {
+    display: inline-block;
+    background: var(--link);
+    color: #fff;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .nav a:hover { opacity: 0.9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">&larr; Back to Labs</a></div>
+<h1 id="automation-tools-for-openshift">Automation Tools for OpenShift</h1>
+<p>In this lab, you will learn how to automate common OpenShift tasks using the <code>oc</code> CLI and Helm. Rather than clicking through the web console for every operation, automation lets you script repeatable workflows, extract exactly the data you need, and deploy complex applications with a single command. These are the skills that separate day-to-day operators from engineers who can manage clusters at scale.</p>
+<h2 id="part-1-oc-cli-power-features">Part 1: oc CLI Power Features</h2>
+<p>The <code>oc</code> command is far more than <code>oc get</code> and <code>oc describe</code>. It includes powerful output formatting, filtering, and scripting capabilities that let you build automation scripts, monitoring checks, and operational tooling.</p>
+<h3 id="project-setup">Project Setup</h3>
+<p>Create a project for this lab:</p>
+<pre><code class="language-bash">oc new-project automation-tools
+</code></pre>
+<p>Grant the <code>anyuid</code> SCC so that nginx containers can run:</p>
+<pre><code class="language-bash">oc adm policy add-scc-to-user anyuid -z default -n automation-tools
+</code></pre>
+<p>Deploy a simple application to give us resources to work with:</p>
+<pre><code class="language-bash">oc create deployment web --image=nginx:1.27 --replicas=3
+</code></pre>
+<p>Wait for all Pods to be running:</p>
+<pre><code class="language-bash">oc rollout status deployment/web
+</code></pre>
+<p>Expose the Deployment with a Service and Route so we have a full resource stack:</p>
+<pre><code class="language-bash">oc expose deployment web --port=80
+oc expose service web
+</code></pre>
+<p>Verify everything is running:</p>
+<pre><code class="language-bash">oc get all
+</code></pre>
+<p>You should see the Deployment, ReplicaSet, 3 Pods, Service, and Route.</p>
+<h3 id="jsonpath-output">JSONPath Output</h3>
+<p>The default <code>oc get</code> output is designed for humans, but automation needs structured data. JSONPath lets you extract exactly the fields you need from any Kubernetes resource.</p>
+<p><strong>Why this matters:</strong> When you are writing scripts to monitor Pod health, generate reports, or feed data into other tools, you need machine-readable output — not a formatted table.</p>
+<p>List just the Pod names and their current phase:</p>
+<pre><code class="language-bash">oc get pods -o jsonpath='{range .items[*]}{.metadata.name}{&quot;\t&quot;}{.status.phase}{&quot;\n&quot;}{end}'
+</code></pre>
+<p>Let's break down the JSONPath expression:</p>
+<ul>
+<li><code>{range .items[*]}</code> — iterate over every item in the list</li>
+<li><code>{.metadata.name}</code> — extract the Pod name</li>
+<li><code>{"\t"}</code> — insert a tab character between fields</li>
+<li><code>{.status.phase}</code> — extract the Pod status</li>
+<li><code>{"\n"}</code> — insert a newline after each Pod</li>
+<li><code>{end}</code> — close the range loop</li>
+</ul>
+<p>Try extracting the cluster API server URL:</p>
+<pre><code class="language-bash">oc get infrastructure cluster -o jsonpath='{.status.apiServerURL}'
+</code></pre>
+<p>This is how automation scripts discover cluster endpoints without hardcoding them.</p>
+<p>Extract all node names and their kubelet versions:</p>
+<pre><code class="language-bash">oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{&quot;\t&quot;}{.status.nodeInfo.kubeletVersion}{&quot;\n&quot;}{end}'
+</code></pre>
+<h3 id="custom-columns">Custom Columns</h3>
+<p>Custom columns give you table-formatted output with exactly the columns you choose. This is ideal for quick reporting and interactive use.</p>
+<p><strong>Why this matters:</strong> The default columns are often not what you need. Custom columns let you build purpose-specific views without writing a full script.</p>
+<pre><code class="language-bash">oc get pods -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,IP:.status.podIP
+</code></pre>
+<p>This produces a clean table with only the fields you care about:</p>
+<pre><code>NAME                   STATUS    IP
+web-66d47686b4-xxxxx   Running   10.129.0.49
+web-66d47686b4-yyyyy   Running   10.129.0.50
+web-66d47686b4-zzzzz   Running   10.129.0.51
+</code></pre>
+<p>Try a more advanced example that shows node resource information:</p>
+<pre><code class="language-bash">oc get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory,OS:.status.nodeInfo.osImage
+</code></pre>
+<h3 id="go-templates">Go Templates</h3>
+<p>Go templates are the most powerful output format. They support conditionals, loops, and functions — everything you need for complex reporting and automation logic.</p>
+<p><strong>Why this matters:</strong> When JSONPath is not expressive enough (for example, when you need conditional logic or string formatting), Go templates give you full control.</p>
+<p>Map each Pod to the node it is running on:</p>
+<pre><code class="language-bash">oc get pods -o go-template='{{range .items}}{{.metadata.name}} -&gt; {{.spec.nodeName}}{{&quot;\n&quot;}}{{end}}'
+</code></pre>
+<p>Show Deployments with their image versions:</p>
+<pre><code class="language-bash">oc get deployments -o go-template='{{range .items}}Deployment: {{.metadata.name}}{{&quot;\n&quot;}}{{range .spec.template.spec.containers}}  Image: {{.image}}{{&quot;\n&quot;}}{{end}}{{end}}'
+</code></pre>
+<h3 id="shell-scripting-with-oc">Shell Scripting with oc</h3>
+<p>The real power of these output formats shows when you combine them with shell scripting. Here are patterns you will use frequently in production.</p>
+<p><strong>Check all Pods across all namespaces for non-Running status:</strong></p>
+<pre><code class="language-bash">oc get pods -A -o jsonpath='{range .items[?(@.status.phase!=&quot;Running&quot;)]}{.metadata.namespace}{&quot;\t&quot;}{.metadata.name}{&quot;\t&quot;}{.status.phase}{&quot;\n&quot;}{end}'
+</code></pre>
+<p>The <code>?(@.status.phase!="Running")</code> is a JSONPath filter expression — it only returns items where the phase is NOT "Running". In a healthy cluster, this should return very little output.</p>
+<p><strong>Loop through all Deployments and show their replica counts:</strong></p>
+<pre><code class="language-bash">for deploy in $(oc get deployments -o jsonpath='{.items[*].metadata.name}'); do
+  replicas=$(oc get deployment &quot;$deploy&quot; -o jsonpath='{.spec.replicas}')
+  ready=$(oc get deployment &quot;$deploy&quot; -o jsonpath='{.status.readyReplicas}')
+  echo &quot;$deploy: $ready/$replicas ready&quot;
+done
+</code></pre>
+<h3 id="exploring-the-api-with-oc-explain">Exploring the API with oc explain</h3>
+<p>When writing YAML manifests, you often need to know what fields are available and what they mean. <code>oc explain</code> is your built-in reference — it documents every field of every resource directly from the API server's OpenAPI schema.</p>
+<p><strong>Why this matters:</strong> Instead of searching the web for YAML examples, you can get authoritative field documentation instantly. This is especially useful for CRDs (Custom Resource Definitions) that may not have external documentation.</p>
+<pre><code class="language-bash">oc explain deployment.spec.strategy
+</code></pre>
+<pre><code>GROUP:      apps
+KIND:       Deployment
+VERSION:    v1
+
+FIELD: strategy &lt;Object&gt;
+
+DESCRIPTION:
+    The deployment strategy to use to replace existing pods with new ones.
+    ...
+FIELDS:
+  rollingUpdate  &lt;Object&gt;
+    ...
+  type  &lt;string&gt;
+    Type of deployment. Can be &quot;Recreate&quot; or &quot;RollingUpdate&quot;.
+</code></pre>
+<p>Drill deeper into nested fields with dot notation:</p>
+<pre><code class="language-bash">oc explain deployment.spec.strategy.rollingUpdate
+</code></pre>
+<p>Use <code>--recursive</code> to see the entire field tree at a glance:</p>
+<pre><code class="language-bash">oc explain pod.spec --recursive | head -40
+</code></pre>
+<h3 id="cluster-identity-commands">Cluster Identity Commands</h3>
+<p>These commands are useful in scripts that need to verify context before making changes.</p>
+<p>Show the current user:</p>
+<pre><code class="language-bash">oc whoami
+</code></pre>
+<p>Show the API server URL:</p>
+<pre><code class="language-bash">oc whoami --show-server
+</code></pre>
+<p>Show the current project:</p>
+<pre><code class="language-bash">oc project
+</code></pre>
+<p>These three commands are often the first lines in operational scripts — they confirm you are connected to the right cluster, as the right user, in the right project before making any changes.</p>
+<h2 id="part-2-helm-application-package-management">Part 2: Helm — Application Package Management</h2>
+<p>Helm is the standard package manager for Kubernetes. It lets you define, install, upgrade, and roll back complex applications as a single unit called a <strong>chart</strong>. A chart bundles all the Kubernetes manifests an application needs (Deployments, Services, ConfigMaps, etc.) along with configurable values.</p>
+<p><strong>Why Helm matters:</strong> Without Helm, deploying an application means managing many individual YAML files. Helm wraps them into a versioned, configurable package — like <code>apt</code> or <code>yum</code> for your cluster.</p>
+<h3 id="verify-helm-installation">Verify Helm Installation</h3>
+<p>Confirm Helm is installed:</p>
+<pre><code class="language-bash">helm version
+</code></pre>
+<p>You should see version information for Helm v3.</p>
+<h3 id="create-a-helm-chart">Create a Helm Chart</h3>
+<p>Rather than installing a chart from a remote repository, you will create your own chart to understand what is inside one.</p>
+<p>Switch to a working directory:</p>
+<pre><code class="language-bash">cd /tmp
+</code></pre>
+<p>Create a new chart scaffold:</p>
+<pre><code class="language-bash">helm create my-webapp
+</code></pre>
+<p>This generates a complete chart directory:</p>
+<pre><code>my-webapp/
+  Chart.yaml          # Chart metadata (name, version, description)
+  values.yaml         # Default configuration values
+  charts/             # Dependencies (sub-charts)
+  templates/          # Kubernetes manifest templates
+    deployment.yaml
+    service.yaml
+    serviceaccount.yaml
+    hpa.yaml
+    ingress.yaml
+    ...
+</code></pre>
+<h3 id="explore-the-chart-structure">Explore the Chart Structure</h3>
+<p>Look at the chart metadata:</p>
+<pre><code class="language-bash">cat my-webapp/Chart.yaml
+</code></pre>
+<p>Key fields:
+- <strong>name</strong> — The chart's name
+- <strong>version</strong> — The chart version (follows Semantic Versioning)
+- <strong>appVersion</strong> — The version of the application being deployed (nginx 1.16.0 by default)</p>
+<p>Now look at the default values:</p>
+<pre><code class="language-bash">head -20 my-webapp/values.yaml
+</code></pre>
+<p>The <code>values.yaml</code> file defines every configurable parameter. Users can override any of these values at install time without modifying the templates. Notice that the default image is <code>nginx</code> — this chart will deploy a working nginx application out of the box.</p>
+<p>Look at one of the templates to see how values are injected:</p>
+<pre><code class="language-bash">head -30 my-webapp/templates/deployment.yaml
+</code></pre>
+<p>The <code>{{ .Values.replicaCount }}</code> and <code>{{ .Values.image.repository }}</code> syntax pulls values from <code>values.yaml</code>. This is how a single chart can be reused across environments — development might use 1 replica while production uses 10, but the same chart serves both.</p>
+<h3 id="create-a-project-and-install-the-chart">Create a Project and Install the Chart</h3>
+<p>Create a project for the Helm deployment:</p>
+<pre><code class="language-bash">oc new-project helm-demo
+</code></pre>
+<p>Grant the <code>anyuid</code> SCC so nginx can run:</p>
+<pre><code class="language-bash">oc adm policy add-scc-to-user anyuid -z default -n helm-demo
+</code></pre>
+<p>The chart creates a custom ServiceAccount, so grant it access too:</p>
+<pre><code class="language-bash">oc adm policy add-scc-to-user anyuid -z my-webapp -n helm-demo
+</code></pre>
+<p>Install the chart:</p>
+<pre><code class="language-bash">helm install my-webapp ./my-webapp --set service.type=ClusterIP
+</code></pre>
+<p>The <code>--set</code> flag overrides a value from <code>values.yaml</code> without editing the file. Here we set the Service type to ClusterIP (the default for OpenShift).</p>
+<p>You should see output confirming the release:</p>
+<pre><code>NAME: my-webapp
+LAST DEPLOYED: ...
+NAMESPACE: helm-demo
+STATUS: deployed
+REVISION: 1
+</code></pre>
+<h3 id="verify-the-deployment">Verify the Deployment</h3>
+<p>Check what Helm created:</p>
+<pre><code class="language-bash">oc get all -n helm-demo
+</code></pre>
+<p>You should see a Deployment, ReplicaSet, Pod, Service, and ServiceAccount — all created from a single <code>helm install</code> command.</p>
+<p>List Helm releases:</p>
+<pre><code class="language-bash">helm list
+</code></pre>
+<pre><code>NAME        NAMESPACE   REVISION    UPDATED                                 STATUS      CHART           APP VERSION
+my-webapp   helm-demo   1           ...                                     deployed    my-webapp-0.1.0 1.16.0
+</code></pre>
+<p>Get detailed status:</p>
+<pre><code class="language-bash">helm status my-webapp
+</code></pre>
+<h3 id="upgrade-a-release">Upgrade a Release</h3>
+<p>One of Helm's most powerful features is upgrades. You can change configuration values and Helm will apply only the differences — just like a Deployment rolling update.</p>
+<p>Scale to 3 replicas:</p>
+<pre><code class="language-bash">helm upgrade my-webapp ./my-webapp --set replicaCount=3 --set service.type=ClusterIP
+</code></pre>
+<p>Verify:</p>
+<pre><code class="language-bash">oc get pods -n helm-demo
+</code></pre>
+<p>You should now see 3 Pods running.</p>
+<p>View the release history:</p>
+<pre><code class="language-bash">helm history my-webapp
+</code></pre>
+<pre><code>REVISION    UPDATED                     STATUS      CHART           APP VERSION DESCRIPTION
+1           ...                         superseded  my-webapp-0.1.0 1.16.0      Install complete
+2           ...                         deployed    my-webapp-0.1.0 1.16.0      Upgrade complete
+</code></pre>
+<p>Each upgrade creates a new revision. Helm keeps track of every change, making it easy to audit what changed and when.</p>
+<h3 id="rollback-a-release">Rollback a Release</h3>
+<p>If an upgrade causes problems, you can instantly revert to any previous revision:</p>
+<pre><code class="language-bash">helm rollback my-webapp 1
+</code></pre>
+<pre><code>Rollback was a success! Happy Helming!
+</code></pre>
+<p>Verify the rollback:</p>
+<pre><code class="language-bash">oc get pods -n helm-demo
+</code></pre>
+<p>You should see only 1 Pod again (the original configuration). Check the history:</p>
+<pre><code class="language-bash">helm history my-webapp
+</code></pre>
+<pre><code>REVISION    UPDATED                     STATUS      CHART           APP VERSION DESCRIPTION
+1           ...                         superseded  my-webapp-0.1.0 1.16.0      Install complete
+2           ...                         superseded  my-webapp-0.1.0 1.16.0      Upgrade complete
+3           ...                         deployed    my-webapp-0.1.0 1.16.0      Rollback to 1
+</code></pre>
+<p>Notice that rollback creates a <strong>new</strong> revision (3), not a revert. The full history is preserved.</p>
+<h3 id="uninstall-a-release">Uninstall a Release</h3>
+<p>Remove the application and all its resources:</p>
+<pre><code class="language-bash">helm uninstall my-webapp
+</code></pre>
+<p>Verify everything is gone:</p>
+<pre><code class="language-bash">helm list
+oc get all -n helm-demo
+</code></pre>
+<p>The release is removed and all Kubernetes resources it created are deleted.</p>
+<h2 id="cleanup">Cleanup</h2>
+<p>Delete the projects:</p>
+<pre><code class="language-bash">oc delete project automation-tools
+oc delete project helm-demo
+</code></pre>
+<h2 id="congratulations">Congratulations</h2>
+<p>You have learned two essential automation approaches for OpenShift:</p>
+<p><strong>oc CLI Power Features:</strong>
+- <strong>JSONPath</strong> — Extract specific fields for machine-readable output
+- <strong>Custom Columns</strong> — Build purpose-specific table views
+- <strong>Go Templates</strong> — Full-power formatting with loops and conditionals
+- <strong>Shell Scripting</strong> — Combine oc output with shell logic for operational automation
+- <strong>oc explain</strong> — Discover API fields without leaving the terminal</p>
+<p><strong>Helm:</strong>
+- <strong>Charts</strong> package all of an application's Kubernetes resources into a single, versioned unit
+- <strong>Values</strong> make charts configurable without modifying templates
+- <strong>Upgrades</strong> apply configuration changes incrementally
+- <strong>Rollbacks</strong> instantly revert to any previous revision
+- <strong>History</strong> provides a complete audit trail of every change</p>
+<p>Together, these tools transform OpenShift from a system you operate manually into one you can manage programmatically and at scale.</p>
+</body>
+</html>
